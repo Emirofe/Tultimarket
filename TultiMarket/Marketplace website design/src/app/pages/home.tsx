@@ -120,8 +120,8 @@ export function HomePage() {
       Promise.all(promises)
         .then((results) => {
           const allProducts = results.flat();
-          // Eliminar duplicados por ID
-          const unique = Array.from(new Map(allProducts.map((p) => [p.id, p])).values());
+          // Eliminar duplicados por ID y tipo
+          const unique = Array.from(new Map(allProducts.map((p) => [`${p.type}-${p.id}`, p])).values());
           setProducts(unique);
         })
         .finally(() => setIsLoadingProducts(false));

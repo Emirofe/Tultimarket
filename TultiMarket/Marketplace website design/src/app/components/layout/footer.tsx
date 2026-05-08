@@ -28,11 +28,16 @@ export function Footer() {
           <div>
             <h4 className="text-white mb-3" style={{ fontSize: 16, fontWeight: 600 }}>Categorias</h4>
             <div className="space-y-2">
-              {categories.map((cat) => (
+              {categories.slice(0, 5).map((cat) => (
                 <Link key={cat.id} to={`/?categoria=${cat.id}`} className="block hover:text-amber-400 transition-colors" style={{ fontSize: 14 }}>
                   {cat.name}
                 </Link>
               ))}
+              {categories.length > 5 && (
+                <Link to="/" className="block text-amber-400 hover:text-amber-300 transition-colors mt-2" style={{ fontSize: 14, fontWeight: 500 }}>
+                  Ver todas las categorías &rarr;
+                </Link>
+              )}
             </div>
           </div>
           <div>

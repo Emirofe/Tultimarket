@@ -163,7 +163,6 @@ export function AdminCatalogPage() {
             </div>
           )}
         </div>
-        )}
       </div>
     </>
   );

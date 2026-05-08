@@ -70,8 +70,10 @@ function createCompradorCarritoRouter({ pool }) {
 			   ci.id_agenda_seleccionada,
 			   p.nombre AS nombre_producto,
 			   p.precio AS precio_producto,
+			   pi.url_imagen AS imagen_producto,
 			   s.nombre AS nombre_servicio,
 			   s.precio_base AS precio_servicio,
+			   si.url_imagen AS imagen_servicio,
 			   COALESCE(np.nombre_comercial, ns.nombre_comercial, '') AS empresa,
 			   ag.fecha_hora_inicio,
 			   ag.fecha_hora_fin,
@@ -79,8 +81,10 @@ function createCompradorCarritoRouter({ pool }) {
 			 FROM carrito_items ci
 			 INNER JOIN carrito c ON c.id = ci.id_carrito
 			 LEFT JOIN productos p ON p.id = ci.id_producto
+			 LEFT JOIN producto_imagenes pi ON pi.id_producto = p.id AND pi.es_principal = TRUE
 			 LEFT JOIN negocios np ON np.id = p.id_negocio
 			 LEFT JOIN servicios s ON s.id = ci.id_servicio
+			 LEFT JOIN servicio_imagenes si ON si.id_servicio = s.id AND si.es_principal = TRUE
 			 LEFT JOIN negocios ns ON ns.id = s.id_negocio
 			 LEFT JOIN agenda_servicios ag ON ag.id = ci.id_agenda_seleccionada
 			 WHERE c.id_usuario = $1
@@ -105,6 +109,7 @@ function createCompradorCarritoRouter({ pool }) {
 				id_servicio: item.id_servicio,
 				id_agenda_seleccionada: item.id_agenda_seleccionada,
 				nombre: esProducto ? item.nombre_producto : item.nombre_servicio,
+				imagen: esProducto ? item.imagen_producto : item.imagen_servicio,
 				empresa: item.empresa,
 				cantidad,
 				precio_unitario: precioUnitario,

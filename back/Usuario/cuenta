@@ -59,9 +59,11 @@ function createCompradorCuentaRouter({ pool }) {
 				   u.nombre,
 				   u.email,
 				   u.telefono,
-				   COALESCE(r.nombre_rol, 'comprador') AS rol
+				   COALESCE(r.nombre_rol, 'comprador') AS rol,
+				   n.id AS id_negocio
 				 FROM usuarios u
 				 LEFT JOIN roles r ON r.id = u.id_rol
+				 LEFT JOIN negocios n ON n.id_usuario = u.id
 				 WHERE u.id = $1
 				   AND u.activo = TRUE
 				   AND u.fecha_eliminacion IS NULL
@@ -80,6 +82,7 @@ function createCompradorCuentaRouter({ pool }) {
 				email: usuario.email,
 				telefono: usuario.telefono,
 				rol: usuario.rol,
+				id_negocio: usuario.id_negocio || null,
 			});
 		} catch (error) {
 			console.error(error);

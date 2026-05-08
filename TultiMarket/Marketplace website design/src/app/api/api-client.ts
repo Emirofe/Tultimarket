@@ -984,55 +984,7 @@ export async function updateServicioCategoriasVendedorApi(id: number, idCategori
   });
 }
 
-export type VendedorPedidoItem = {
-  id: number;
-  type: "producto" | "servicio";
-  name: string;
-  quantity: number;
-  price: number;
-  subtotal: number;
-  snapshot?: unknown;
-};
 
-export type VendedorPedido = {
-  id: number;
-  folio: string;
-  date: string;
-  buyerName: string;
-  buyerEmail: string;
-  buyerPhone: string | null;
-  total: number;
-  status: string;
-  address: unknown;
-  items: VendedorPedidoItem[];
-};
-
-export async function getPedidosVendedorRawApi(): Promise<VendedorPedido[]> {
-  const data = await api<{ status: string; pedidos: VendedorPedido[] }>("/api/vendedor/pedidos");
-  return data.pedidos;
-}
-
-export async function updateEstadoPedidoVendedorApi(
-  pedidoId: number,
-  estado: "PENDIENTE" | "EN PREPARACION" | "ENVIADO" | "ENTREGADO" | "CANCELADO"
-) {
-  return api<{ status: string; mensaje: string }>(`/api/vendedor/pedidos/${pedidoId}/estado`, {
-    method: "PUT",
-    body: JSON.stringify({ estado }),
-  });
-}
-
-export async function getEstadisticasVendedorRawApi() {
-  return api<{
-    status: string;
-    estadisticas: {
-      por_estado: Array<{ estado_pedido: string; cantidad: string; total_ventas: string }>;
-      ventas_mensuales: Array<{ mes: string; cantidad_pedidos: string; total_ventas: string }>;
-      total_pedidos: number;
-      total_ventas: number;
-    };
-  }>("/api/vendedor/pedidos/estadisticas");
-}
 
 /**
  * GET /api/vendedor/negocio

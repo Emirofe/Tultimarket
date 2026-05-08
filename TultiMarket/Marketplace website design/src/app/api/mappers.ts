@@ -24,7 +24,7 @@ const API_HOST = typeof window !== "undefined" ? window.location.hostname : "loc
 const API_BASE = `http://${API_HOST}:3000`;
 
 /** Convierte la imagen_principal relativa del back en una URL completa. */
-function toImageUrl(path: string | null | undefined): string {
+export function toImageUrl(path: string | null | undefined): string {
   if (!path) return "https://placehold.co/400x400?text=Sin+imagen";
   if (path.startsWith("http")) return path;
   return `${API_BASE}${path}`;

@@ -28,6 +28,7 @@ import {
   addToWishlistApi,
   removeFromWishlistApi,
 } from "../api/api-client";
+import { toImageUrl } from "../api/mappers";
 
 // ─── Tipo extendido del CarritoItem para guardar el id_item del backend ───────
 interface CartItemConId extends CartItem {
@@ -107,7 +108,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           name: item.nombre,
           description: "",
           price: Number(item.precio_unitario) || 0,
-          image: item.imagen ?? "https://placehold.co/400x400?text=Sin+Imagen",
+          image: toImageUrl(item.imagen),
           images: [],
           category: "general",
           rating: 0,

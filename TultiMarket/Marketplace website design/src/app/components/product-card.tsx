@@ -34,7 +34,7 @@ export function ProductCard({ product }: ProductCardProps) {
 
   return (
     <Link
-      to={`/producto/${product.id}`}
+      to={`/producto/${product.id}${product.type === "servicio" ? "?type=servicio" : ""}`}
       className="group bg-white rounded-xl border border-border overflow-hidden hover:shadow-lg transition-all duration-300 flex flex-col"
     >
       <div className="relative overflow-hidden aspect-square bg-gray-50">

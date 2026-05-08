@@ -11,7 +11,7 @@ const createAdminReportesRouter = require("./Admin/reportes");
 const createVendedorRouter = require("./Vendedor/CRUD");
 const createVendedorOrdersRouter = require("./Vendedor/Pedidos");
 const createCompradorRouter = require("./Comprador/productos");
-const createCompradorCuentaRouter = require("./Comprador/cuenta");
+const createCompradorCuentaRouter = require("./Usuario/cuenta");
 const createCompradorCarritoRouter = require("./Comprador/carrito");
 const createCompradorPedidosRouter = require("./Comprador/pedidos");
 const createCompradorReportesRouter = require("./Comprador/reportes");
@@ -54,7 +54,7 @@ const pool = new Pool({
   user: "postgres",
   host: "localhost",
   database: "senora_chela",
-  password: "1234",
+  password: "hola",
   port: 5432,
 });
 
@@ -137,6 +137,12 @@ app.use(
 
 app.use(
   createCompradorReportesRouter({
+    pool,
+  })
+);
+
+app.use(
+  createUsuarioWishlistRouter({
     pool,
   })
 );

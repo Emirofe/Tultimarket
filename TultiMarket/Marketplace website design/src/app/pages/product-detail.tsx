@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams, Link } from "react-router";
+import { useParams, Link, useSearchParams } from "react-router";
 import {
   Heart,
   ShoppingCart,
@@ -29,6 +29,8 @@ import { toast } from "sonner";
 
 export function ProductDetailPage() {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
+  const typeParam = searchParams.get("type");
   const {
     addToCart,
     addToWishlist,
@@ -80,17 +82,23 @@ export function ProductDetailPage() {
       return;
     }
 
-    // Buscar en el backend: primero como producto, luego como servicio
     setIsLoading(true);
-    getProductoDetalleApi(numericId)
-      .then((p) => setProduct(p))
-      .catch(() => {
-        return getServicioDetalleApi(numericId)
-          .then((s) => setProduct(s))
-          .catch(() => setProduct(null));
-      })
-      .finally(() => setIsLoading(false));
-  }, [id]);
+    if (typeParam === "servicio") {
+      getServicioDetalleApi(numericId)
+        .then((s) => setProduct(s))
+        .catch(() => setProduct(null))
+        .finally(() => setIsLoading(false));
+    } else {
+      getProductoDetalleApi(numericId)
+        .then((p) => setProduct(p))
+        .catch(() => {
+          return getServicioDetalleApi(numericId)
+            .then((s) => setProduct(s))
+            .catch(() => setProduct(null));
+        })
+        .finally(() => setIsLoading(false));
+    }
+  }, [id, typeParam]);
 
   const isService = product?.type === "servicio";
 

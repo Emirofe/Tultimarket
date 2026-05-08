@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { AlertTriangle, ArrowRight, Boxes, ClipboardList, DollarSign, Loader2, Package, Wrench } from "lucide-react";
 import {
-  getEstadisticasVendedorRawApi,
+  getEstadisticasVendedorApi,
   getPedidosVendedorRawApi,
   getProductosVendedorApi,
   getServiciosVendedorApi,
-  type VendedorPedido,
+  type RawVendorOrder,
 } from "../../api/api-client";
 import { useStore } from "../../context/store-context";
 import { toast } from "sonner";
@@ -19,7 +19,7 @@ export function SellerDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState<SellerProduct[]>([]);
   const [services, setServices] = useState<SellerService[]>([]);
-  const [orders, setOrders] = useState<VendedorPedido[]>([]);
+  const [orders, setOrders] = useState<RawVendorOrder[]>([]);
   const [sales, setSales] = useState({ totalOrders: 0, totalRevenue: 0 });
 
   useEffect(() => {
@@ -33,7 +33,7 @@ export function SellerDashboardPage() {
       getProductosVendedorApi(negocioId),
       getServiciosVendedorApi(negocioId),
       getPedidosVendedorRawApi().catch(() => []),
-      getEstadisticasVendedorRawApi().catch(() => null),
+      getEstadisticasVendedorApi().catch(() => null),
     ])
       .then(([productos, servicios, pedidos, estadisticas]) => {
         setProducts(productos);
@@ -41,7 +41,7 @@ export function SellerDashboardPage() {
         setOrders(pedidos);
         setSales({
           totalOrders: estadisticas?.estadisticas.total_pedidos ?? pedidos.length,
-          totalRevenue: Number(estadisticas?.estadisticas.total_ventas ?? 0),
+          totalRevenue: Number(estadisticas?.estadisticas?.total_ventas ?? 0),
         });
       })
       .catch(() => toast.error("No se pudo cargar el resumen del vendedor"))
