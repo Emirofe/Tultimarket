@@ -431,211 +431,97 @@ function createAdminRouter({ pool }) {
       return res.status(500).json({ status: "error", mensaje: "Error al actualizar rol del usuario" });
     }
   });
+  // ═══════════════════════════ CATEGORÍAS ═══════════════════════════
 
-  // ── ENDPOINT PEDIDOS ADMIN ──────────────────────────
-
-  router.get("/admin/pedidos", async (req, res) => {
-    const adminId = await requireActiveAdminSession(req, res);
-    if (!adminId) return;
-
-    try {
-      const result = await pool.query(
-        `SELECT
-           p.id,
-           'PED-' || LPAD(p.id::TEXT, 6, '0') AS folio,
-           p.fecha_pedido AS date,
-           u.nombre AS "buyerName",
-           u.email AS "buyerEmail",
-           p.total,
-           p.estado_pedido AS status,
-           p.direccion_envio_snapshot AS address,
-           COALESCE(
-             (
-               SELECT json_agg(
-                 json_build_object(
-                   'id', COALESCE(dp.id_producto, dp.id_servicio),
-                   'type', CASE WHEN dp.id_producto IS NOT NULL THEN 'producto' ELSE 'servicio' END,
-                   'name', COALESCE(dp.snapshot_item->>'nombre', 'Item'),
-                   'quantity', dp.cantidad,
-                   'price', dp.precio_unitario_historico,
-                   'subtotal', dp.cantidad * dp.precio_unitario_historico
-                 )
-               )
-               FROM detalle_pedido dp
-               WHERE dp.id_pedido = p.id
-             ),
-             '[]'::json
-           ) AS items
-         FROM pedidos p
-         INNER JOIN usuarios u ON u.id = p.id_usuario
-         ORDER BY p.fecha_pedido DESC
-         LIMIT 200`
-      );
-
-      return res.status(200).json({
-        status: "success",
-        pedidos: result.rows,
-      });
-    } catch (error) {
-      console.error(error);
-      return res.status(500).json({ status: "error", mensaje: "Error al obtener pedidos" });
-    }
-  });
-
-  // ── ENDPOINTS PARA CATEGORÍAS ──────────────────
-
+  // Listar todas las categorías
   router.get("/admin/categorias", async (req, res) => {
-    const adminId = await requireActiveAdminSession(req, res);
+    const adminId = requireAdminSession(req, res);
     if (!adminId) return;
 
     try {
       const result = await pool.query(
-        `SELECT id, nombre_categoria, tipo
-         FROM categorias
-         ORDER BY tipo ASC, nombre_categoria ASC`
+        `SELECT id, nombre_categoria, tipo FROM categorias ORDER BY nombre_categoria ASC`
       );
-
       return res.status(200).json({
-        status: "success",
+        status: "ok",
         total: result.rows.length,
         categorias: result.rows,
       });
     } catch (error) {
       console.error(error);
-      return res.status(500).json({ status: "error", mensaje: "Error al obtener categorias" });
+      return res.status(500).json({ status: "error", mensaje: "Error al obtener categorías" });
     }
   });
 
+  // Crear categoría
   router.post("/admin/categorias", async (req, res) => {
-    const adminId = await requireActiveAdminSession(req, res);
+    const adminId = requireAdminSession(req, res);
     if (!adminId) return;
 
+    const { nombre_categoria, tipo } = req.body;
+    if (!nombre_categoria || !tipo) {
+      return res.status(400).json({ status: "error", mensaje: "nombre_categoria y tipo son obligatorios" });
+    }
+
     try {
-      const { nombre_categoria, tipo } = req.body;
-
-      if (!nombre_categoria || String(nombre_categoria).trim() === "") {
-        return res.status(400).json({ status: "error", mensaje: "nombre_categoria es requerido" });
-      }
-
-      if (!tipo || !["producto", "servicio", "ambos"].includes(String(tipo).toLowerCase())) {
-        return res.status(400).json({ status: "error", mensaje: "tipo debe ser 'producto', 'servicio' o 'ambos'" });
-      }
-
-      const nombre = String(nombre_categoria).trim();
-      const tipoLower = String(tipo).toLowerCase();
-
-      // Verificar si ya existe (respetando UNIQUE(nombre_categoria, id_padre) de la BD)
-      const existe = await pool.query(
-        "SELECT id FROM categorias WHERE nombre_categoria = $1 AND id_padre IS NULL LIMIT 1",
-        [nombre]
-      );
-
-      if (existe.rows.length > 0) {
-        return res.status(409).json({ status: "error", mensaje: "Categoria ya existe" });
-      }
-
       const result = await pool.query(
-        `INSERT INTO categorias (nombre_categoria, tipo)
-         VALUES ($1, $2)
-         RETURNING id, nombre_categoria, tipo`,
-        [nombre, tipoLower]
+        `INSERT INTO categorias (nombre_categoria, tipo) VALUES ($1, $2) RETURNING *`,
+        [nombre_categoria.trim(), tipo]
       );
-
-      return res.status(201).json({
-        status: "success",
-        mensaje: "Categoria creada exitosamente",
-        data: result.rows[0],
-      });
+      return res.status(201).json({ status: "ok", mensaje: "Categoría creada", data: result.rows[0] });
     } catch (error) {
       console.error(error);
-      return res.status(500).json({ status: "error", mensaje: "Error al crear categoria" });
+      return res.status(500).json({ status: "error", mensaje: "Error al crear categoría" });
     }
   });
 
+  // Actualizar categoría
   router.put("/admin/categorias/:id", async (req, res) => {
-    const adminId = await requireActiveAdminSession(req, res);
+    const adminId = requireAdminSession(req, res);
     if (!adminId) return;
 
+    const catId = Number(req.params.id);
+    const { nombre_categoria, tipo } = req.body;
+
+    if (!nombre_categoria || !tipo) {
+      return res.status(400).json({ status: "error", mensaje: "nombre_categoria y tipo son obligatorios" });
+    }
+
     try {
-      const id = Number(req.params.id);
-      const { nombre_categoria, tipo } = req.body;
-
-      if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({ status: "error", mensaje: "id invalido" });
-      }
-
-      if (!nombre_categoria || String(nombre_categoria).trim() === "") {
-        return res.status(400).json({ status: "error", mensaje: "nombre_categoria es requerido" });
-      }
-
-      if (!tipo || !["producto", "servicio", "ambos"].includes(String(tipo).toLowerCase())) {
-        return res.status(400).json({ status: "error", mensaje: "tipo debe ser 'producto', 'servicio' o 'ambos'" });
-      }
-
-      const nombre = String(nombre_categoria).trim();
-      const tipoLower = String(tipo).toLowerCase();
-
-      // Verificar si ya existe otra con mismo nombre (respetando UNIQUE(nombre_categoria, id_padre))
-      const existe = await pool.query(
-        "SELECT id FROM categorias WHERE nombre_categoria = $1 AND id_padre IS NULL AND id != $2 LIMIT 1",
-        [nombre, id]
-      );
-
-      if (existe.rows.length > 0) {
-        return res.status(409).json({ status: "error", mensaje: "Otra categoria con ese nombre ya existe" });
-      }
-
       const result = await pool.query(
-        `UPDATE categorias
-         SET nombre_categoria = $1, tipo = $2
-         WHERE id = $3
-         RETURNING id, nombre_categoria, tipo`,
-        [nombre, tipoLower, id]
+        `UPDATE categorias SET nombre_categoria = $1, tipo = $2 WHERE id = $3 RETURNING *`,
+        [nombre_categoria.trim(), tipo, catId]
       );
-
       if (result.rows.length === 0) {
-        return res.status(404).json({ status: "error", mensaje: "Categoria no encontrada" });
+        return res.status(404).json({ status: "error", mensaje: "Categoría no encontrada" });
       }
-
-      return res.status(200).json({
-        status: "success",
-        mensaje: "Categoria actualizada exitosamente",
-        data: result.rows[0],
-      });
+      return res.status(200).json({ status: "ok", mensaje: "Categoría actualizada", data: result.rows[0] });
     } catch (error) {
       console.error(error);
-      return res.status(500).json({ status: "error", mensaje: "Error al actualizar categoria" });
+      return res.status(500).json({ status: "error", mensaje: "Error al actualizar categoría" });
     }
   });
 
+  // Eliminar categoría
   router.delete("/admin/categorias/:id", async (req, res) => {
-    const adminId = await requireActiveAdminSession(req, res);
+    const adminId = requireAdminSession(req, res);
     if (!adminId) return;
 
+    const catId = Number(req.params.id);
+
     try {
-      const id = Number(req.params.id);
-
-      if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({ status: "error", mensaje: "id invalido" });
-      }
-
-      const result = await pool.query(
-        "DELETE FROM categorias WHERE id = $1 RETURNING id, nombre_categoria, tipo",
-        [id]
-      );
+      // Primero eliminar relaciones en producto_categoria y servicio_categoria
+      await pool.query(`DELETE FROM producto_categoria WHERE id_categoria = $1`, [catId]);
+      await pool.query(`DELETE FROM servicio_categoria WHERE id_categoria = $1`, [catId]);
+      const result = await pool.query(`DELETE FROM categorias WHERE id = $1 RETURNING id`, [catId]);
 
       if (result.rows.length === 0) {
-        return res.status(404).json({ status: "error", mensaje: "Categoria no encontrada" });
+        return res.status(404).json({ status: "error", mensaje: "Categoría no encontrada" });
       }
-
-      return res.status(200).json({
-        status: "success",
-        mensaje: "Categoria eliminada exitosamente",
-        data: result.rows[0],
-      });
+      return res.status(200).json({ status: "ok", mensaje: "Categoría eliminada" });
     } catch (error) {
       console.error(error);
-      return res.status(500).json({ status: "error", mensaje: "Error al eliminar categoria" });
+      return res.status(500).json({ status: "error", mensaje: "Error al eliminar categoría" });
     }
   });
 

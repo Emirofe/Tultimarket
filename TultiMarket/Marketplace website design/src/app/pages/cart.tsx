@@ -16,9 +16,7 @@ export function CartPage() {
       <main className="max-w-7xl mx-auto px-4 py-8 flex-1 w-full">
         <div className="flex items-center gap-3 mb-6">
           <h1 style={{ fontSize: 28, fontWeight: 600 }}>Carrito de Compras</h1>
-          <span className="bg-primary/10 text-primary px-3 py-1 rounded-full flex items-center gap-1" style={{ fontSize: 13, fontWeight: 500 }}>
-            <Tag size={14} /> Fiestas
-          </span>
+
         </div>
 
         {cart.length === 0 ? (
@@ -82,8 +80,9 @@ export function CartPage() {
                           </span>
                           <button
                             onClick={() => {
-                              if (item.quantity >= item.product.stock) {
-                                toast.error(`Solo hay ${item.product.stock} unidades disponibles`);
+                              const maxStock = item.product.stock;
+                              if (maxStock > 0 && item.quantity >= maxStock) {
+                                toast.error(`Solo hay ${maxStock} unidades disponibles`);
                                 return;
                               }
                               updateCartQuantity(item.product.id, item.quantity + 1);
@@ -95,7 +94,7 @@ export function CartPage() {
                         </div>
                       ) : (
                         <div className="flex items-center text-muted-foreground" style={{ fontSize: 14 }}>
-                           Servicio (1)
+                          Servicio (1)
                         </div>
                       )}
                       <div className="flex items-center gap-4">

@@ -7,7 +7,7 @@ function createCompradorRouter({ pool }) {
   router.get("/comprador/categorias", async (req, res) => {
     try {
       const result = await pool.query(
-        `SELECT id, nombre_categoria, tipo
+        `SELECT id, nombre_categoria, tipo, id_padre
          FROM categorias
          ORDER BY nombre_categoria ASC`
       );
@@ -17,11 +17,44 @@ function createCompradorRouter({ pool }) {
           id: categoria.id,
           nombre: categoria.nombre_categoria,
           tipo: categoria.tipo,
+          id_padre: categoria.id_padre,
         }))
       );
     } catch (error) {
       console.error(error);
       return res.status(500).json({ mensaje: "Error al obtener categorias" });
+    }
+  });
+
+  // Top categorías raíz por cantidad de productos (para navbar)
+  router.get("/comprador/categorias/top", async (req, res) => {
+    try {
+      const result = await pool.query(
+        `WITH RECURSIVE arbol AS (
+           SELECT id, id AS raiz_id FROM categorias WHERE id_padre IS NULL
+           UNION ALL
+           SELECT c.id, a.raiz_id FROM categorias c INNER JOIN arbol a ON c.id_padre = a.id
+         )
+         SELECT cat.id, cat.nombre_categoria, COUNT(DISTINCT pc.id_producto) AS total_productos
+         FROM arbol r
+         INNER JOIN producto_categoria pc ON pc.id_categoria = r.id
+         INNER JOIN categorias cat ON cat.id = r.raiz_id
+         GROUP BY cat.id, cat.nombre_categoria
+         HAVING COUNT(DISTINCT pc.id_producto) > 0
+         ORDER BY total_productos DESC
+         LIMIT 10`
+      );
+
+      return res.status(200).json(
+        result.rows.map((c) => ({
+          id: c.id,
+          nombre: c.nombre_categoria,
+          total: Number(c.total_productos),
+        }))
+      );
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ mensaje: "Error al obtener top categorias" });
     }
   });
 
@@ -35,7 +68,7 @@ function createCompradorRouter({ pool }) {
     }
 
     try {
-      const filtros = ["pc.id_categoria = $1"];
+      const filtros = ["pc.id_categoria IN (SELECT id FROM cat_tree)"];
       const valores = [idCategoria];
       let qLikeIndex = null;
 
@@ -88,7 +121,12 @@ function createCompradorRouter({ pool }) {
       }
 
       const productosResult = await pool.query(
-        `SELECT
+        `WITH RECURSIVE cat_tree AS (
+           SELECT id FROM categorias WHERE id = $1
+           UNION ALL
+           SELECT c.id FROM categorias c INNER JOIN cat_tree ct ON c.id_padre = ct.id
+         )
+         SELECT
            p.id,
            p.nombre,
            p.calificacion,
@@ -152,7 +190,7 @@ function createCompradorRouter({ pool }) {
     }
 
     try {
-      const filtros = ["sc.id_categoria = $1"];
+      const filtros = ["sc.id_categoria IN (SELECT id FROM cat_tree)"];
       const valores = [idCategoria];
       let qLikeIndex = null;
 
@@ -205,7 +243,12 @@ function createCompradorRouter({ pool }) {
       }
 
       const serviciosResult = await pool.query(
-        `SELECT
+        `WITH RECURSIVE cat_tree AS (
+           SELECT id FROM categorias WHERE id = $1
+           UNION ALL
+           SELECT c.id FROM categorias c INNER JOIN cat_tree ct ON c.id_padre = ct.id
+         )
+         SELECT
            s.id,
            s.nombre,
            s.calificacion,
@@ -256,6 +299,316 @@ function createCompradorRouter({ pool }) {
     } catch (error) {
       console.error(error);
       return res.status(500).json({ mensaje: "Error al obtener servicios por categoria" });
+    }
+  });
+
+  // Obtener todos los productos activos
+  router.get("/comprador/productos", async (req, res) => {
+    const { q, precio_min, precio_max, calificacion_min, ordenar } = req.query;
+
+    try {
+      const filtros = ["p.esta_activo = TRUE"];
+      const valores = [];
+      let qLikeIndex = null;
+
+      if (q !== undefined && String(q).trim() !== "") {
+        valores.push(`%${String(q).trim()}%`);
+        qLikeIndex = valores.length;
+        filtros.push(
+          `(p.nombre ILIKE $${qLikeIndex} OR COALESCE(p.descripcion, '') ILIKE $${qLikeIndex} OR COALESCE(n.nombre_comercial, '') ILIKE $${qLikeIndex})`
+        );
+      }
+
+      const precioMinNum = Number(precio_min);
+      if (precio_min !== undefined && precio_min !== "" && !Number.isNaN(precioMinNum)) {
+        valores.push(precioMinNum);
+        filtros.push(`p.precio >= $${valores.length}`);
+      }
+
+      const precioMaxNum = Number(precio_max);
+      if (precio_max !== undefined && precio_max !== "" && !Number.isNaN(precioMaxNum)) {
+        valores.push(precioMaxNum);
+        filtros.push(`p.precio <= $${valores.length}`);
+      }
+
+      const calificacionMinNum = Number(calificacion_min);
+      if (calificacion_min !== undefined && calificacion_min !== "" && !Number.isNaN(calificacionMinNum)) {
+        valores.push(calificacionMinNum);
+        filtros.push(`COALESCE(p.calificacion, 0) >= $${valores.length}`);
+      }
+
+      const orden = String(ordenar || "mejor_calificados").toLowerCase();
+      let orderBy = "p.calificacion DESC NULLS LAST, COUNT(r.id) DESC, p.fecha_registro DESC";
+
+      if (orden === "precio_menor" || orden === "precio_menor_a_mayor" || orden === "precio_asc") {
+        orderBy = "p.precio ASC, p.nombre ASC";
+      } else if (orden === "precio_mayor" || orden === "precio_mayor_a_menor" || orden === "precio_desc") {
+        orderBy = "p.precio DESC, p.nombre ASC";
+      } else if (orden === "nombre" || orden === "nombre_az") {
+        orderBy = "p.nombre ASC";
+      } else if (orden === "relevancia" && qLikeIndex !== null) {
+        orderBy = `
+          CASE
+            WHEN p.nombre ILIKE $${qLikeIndex} THEN 3
+            WHEN COALESCE(p.descripcion, '') ILIKE $${qLikeIndex} THEN 2
+            WHEN COALESCE(n.nombre_comercial, '') ILIKE $${qLikeIndex} THEN 1
+            ELSE 0
+          END DESC,
+          p.calificacion DESC NULLS LAST,
+          COUNT(r.id) DESC,
+          p.fecha_registro DESC`;
+      }
+
+      const result = await pool.query(
+        `SELECT
+           p.id,
+           p.nombre,
+           p.calificacion,
+           p.precio AS precio_original,
+           CASE
+             WHEN d.id IS NOT NULL
+               AND d.codigo_cupon IS NULL
+               AND CURRENT_TIMESTAMP BETWEEN d.fecha_inicio AND d.fecha_fin
+             THEN ROUND((p.precio * (1 - (d.porcentaje_descuento / 100)))::numeric, 2)
+             ELSE p.precio
+           END AS precio,
+           CASE
+             WHEN d.id IS NOT NULL
+               AND d.codigo_cupon IS NULL
+               AND CURRENT_TIMESTAMP BETWEEN d.fecha_inicio AND d.fecha_fin
+             THEN d.porcentaje_descuento
+             ELSE NULL
+           END AS porcentaje_descuento,
+           pi.url_imagen AS imagen_principal,
+           COALESCE(n.nombre_comercial, '') AS empresa,
+           COUNT(r.id) AS numero_resenas
+         FROM productos p
+         LEFT JOIN negocios n ON n.id = p.id_negocio
+         LEFT JOIN descuentos d ON d.id = p.id_descuento
+         LEFT JOIN producto_imagenes pi ON pi.id_producto = p.id AND pi.es_principal = TRUE
+         LEFT JOIN resenas r ON r.id_producto = p.id
+         WHERE ${filtros.join(" AND ")}
+         GROUP BY p.id, p.nombre, p.calificacion, p.precio, pi.url_imagen, n.nombre_comercial, p.fecha_registro,
+                  d.id, d.codigo_cupon, d.porcentaje_descuento, d.fecha_inicio, d.fecha_fin
+         ORDER BY ${orderBy}`,
+        valores
+      );
+
+      return res.status(200).json({
+        filtros: {
+          q: q || null,
+          precio_min: precio_min || null,
+          precio_max: precio_max || null,
+          calificacion_min: calificacion_min || null,
+          ordenar: ordenar || "mejor_calificados",
+        },
+        total: result.rows.length,
+        productos: result.rows,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ mensaje: "Error al obtener productos" });
+    }
+  });
+
+  // Obtener todos los servicios activos
+  router.get("/comprador/servicios", async (req, res) => {
+    const { q, precio_min, precio_max, calificacion_min, ordenar } = req.query;
+
+    try {
+      const filtros = ["s.esta_activo = TRUE"];
+      const valores = [];
+      let qLikeIndex = null;
+
+      if (q !== undefined && String(q).trim() !== "") {
+        valores.push(`%${String(q).trim()}%`);
+        qLikeIndex = valores.length;
+        filtros.push(
+          `(s.nombre ILIKE $${qLikeIndex} OR COALESCE(s.descripcion, '') ILIKE $${qLikeIndex} OR COALESCE(n.nombre_comercial, '') ILIKE $${qLikeIndex})`
+        );
+      }
+
+      const precioMinNum = Number(precio_min);
+      if (precio_min !== undefined && precio_min !== "" && !Number.isNaN(precioMinNum)) {
+        valores.push(precioMinNum);
+        filtros.push(`s.precio_base >= $${valores.length}`);
+      }
+
+      const precioMaxNum = Number(precio_max);
+      if (precio_max !== undefined && precio_max !== "" && !Number.isNaN(precioMaxNum)) {
+        valores.push(precioMaxNum);
+        filtros.push(`s.precio_base <= $${valores.length}`);
+      }
+
+      const calificacionMinNum = Number(calificacion_min);
+      if (calificacion_min !== undefined && calificacion_min !== "" && !Number.isNaN(calificacionMinNum)) {
+        valores.push(calificacionMinNum);
+        filtros.push(`COALESCE(s.calificacion, 0) >= $${valores.length}`);
+      }
+
+      const orden = String(ordenar || "mejor_calificados").toLowerCase();
+      let orderBy = "s.calificacion DESC NULLS LAST, COUNT(r.id) DESC, s.fecha_registro DESC";
+
+      if (orden === "precio_menor" || orden === "precio_menor_a_mayor" || orden === "precio_asc") {
+        orderBy = "s.precio_base ASC, s.nombre ASC";
+      } else if (orden === "precio_mayor" || orden === "precio_mayor_a_menor" || orden === "precio_desc") {
+        orderBy = "s.precio_base DESC, s.nombre ASC";
+      } else if (orden === "nombre" || orden === "nombre_az") {
+        orderBy = "s.nombre ASC";
+      } else if (orden === "relevancia" && qLikeIndex !== null) {
+        orderBy = `
+          CASE
+            WHEN s.nombre ILIKE $${qLikeIndex} THEN 3
+            WHEN COALESCE(s.descripcion, '') ILIKE $${qLikeIndex} THEN 2
+            WHEN COALESCE(n.nombre_comercial, '') ILIKE $${qLikeIndex} THEN 1
+            ELSE 0
+          END DESC,
+          s.calificacion DESC NULLS LAST,
+          COUNT(r.id) DESC,
+          s.fecha_registro DESC`;
+      }
+
+      const result = await pool.query(
+        `SELECT
+           s.id,
+           s.nombre,
+           s.calificacion,
+           s.precio_base AS precio_original,
+           CASE
+             WHEN d.id IS NOT NULL
+               AND d.codigo_cupon IS NULL
+               AND CURRENT_TIMESTAMP BETWEEN d.fecha_inicio AND d.fecha_fin
+             THEN ROUND((s.precio_base * (1 - (d.porcentaje_descuento / 100)))::numeric, 2)
+             ELSE s.precio_base
+           END AS precio,
+           CASE
+             WHEN d.id IS NOT NULL
+               AND d.codigo_cupon IS NULL
+               AND CURRENT_TIMESTAMP BETWEEN d.fecha_inicio AND d.fecha_fin
+             THEN d.porcentaje_descuento
+             ELSE NULL
+           END AS porcentaje_descuento,
+           si.url_imagen AS imagen_principal,
+           COALESCE(n.nombre_comercial, '') AS empresa,
+           COUNT(r.id) AS numero_resenas
+         FROM servicios s
+         LEFT JOIN negocios n ON n.id = s.id_negocio
+         LEFT JOIN descuentos d ON d.id = s.id_descuento
+         LEFT JOIN servicio_imagenes si ON si.id_servicio = s.id AND si.es_principal = TRUE
+         LEFT JOIN resenas r ON r.id_servicio = s.id
+         WHERE ${filtros.join(" AND ")}
+         GROUP BY s.id, s.nombre, s.calificacion, s.precio_base, si.url_imagen, n.nombre_comercial, s.fecha_registro,
+                  d.id, d.codigo_cupon, d.porcentaje_descuento, d.fecha_inicio, d.fecha_fin
+         ORDER BY ${orderBy}`,
+        valores
+      );
+
+      return res.status(200).json({
+        filtros: {
+          q: q || null,
+          precio_min: precio_min || null,
+          precio_max: precio_max || null,
+          calificacion_min: calificacion_min || null,
+          ordenar: ordenar || "mejor_calificados",
+        },
+        total: result.rows.length,
+        servicios: result.rows,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ mensaje: "Error al obtener servicios" });
+    }
+  });
+
+  // Obtener todos los productos con descuento activo
+  router.get("/comprador/productos/descuentos", async (req, res) => {
+    try {
+      const result = await pool.query(
+        `SELECT
+           p.id,
+           p.nombre,
+           p.calificacion,
+           p.precio AS precio_original,
+           ROUND((p.precio * (1 - (d.porcentaje_descuento / 100)))::numeric, 2) AS precio,
+           d.porcentaje_descuento,
+           pi.url_imagen AS imagen_principal,
+           COALESCE(n.nombre_comercial, '') AS empresa,
+           COUNT(r.id) AS numero_resenas
+         FROM productos p
+         INNER JOIN descuentos d ON d.id = p.id_descuento
+         LEFT JOIN negocios n ON n.id = p.id_negocio
+         LEFT JOIN producto_imagenes pi ON pi.id_producto = p.id AND pi.es_principal = TRUE
+         LEFT JOIN resenas r ON r.id_producto = p.id
+         WHERE p.esta_activo = TRUE
+           AND d.codigo_cupon IS NULL
+           AND CURRENT_TIMESTAMP BETWEEN d.fecha_inicio AND d.fecha_fin
+         GROUP BY p.id, p.nombre, p.calificacion, p.precio, d.porcentaje_descuento, pi.url_imagen, n.nombre_comercial, p.fecha_registro
+         ORDER BY p.fecha_registro DESC, p.nombre ASC`
+      );
+
+      return res.status(200).json({
+        total: result.rows.length,
+        productos: result.rows.map((producto) => ({
+          id: producto.id,
+          nombre: producto.nombre,
+          calificacion: producto.calificacion !== null ? Number(producto.calificacion) : null,
+          precio_original: Number(producto.precio_original),
+          precio: Number(producto.precio),
+          porcentaje_descuento: producto.porcentaje_descuento !== null ? Number(producto.porcentaje_descuento) : null,
+          imagen_principal: producto.imagen_principal,
+          empresa: producto.empresa,
+          numero_resenas: Number(producto.numero_resenas),
+        })),
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ mensaje: "Error al obtener productos con descuento" });
+    }
+  });
+
+  // Obtener todos los servicios con descuento activo
+  router.get("/comprador/servicios/descuentos", async (req, res) => {
+    try {
+      const result = await pool.query(
+        `SELECT
+           s.id,
+           s.nombre,
+           s.calificacion,
+           s.precio_base AS precio_original,
+           ROUND((s.precio_base * (1 - (d.porcentaje_descuento / 100)))::numeric, 2) AS precio,
+           d.porcentaje_descuento,
+           si.url_imagen AS imagen_principal,
+           COALESCE(n.nombre_comercial, '') AS empresa,
+           COUNT(r.id) AS numero_resenas
+         FROM servicios s
+         INNER JOIN descuentos d ON d.id = s.id_descuento
+         LEFT JOIN negocios n ON n.id = s.id_negocio
+         LEFT JOIN servicio_imagenes si ON si.id_servicio = s.id AND si.es_principal = TRUE
+         LEFT JOIN resenas r ON r.id_servicio = s.id
+         WHERE s.esta_activo = TRUE
+           AND d.codigo_cupon IS NULL
+           AND CURRENT_TIMESTAMP BETWEEN d.fecha_inicio AND d.fecha_fin
+         GROUP BY s.id, s.nombre, s.calificacion, s.precio_base, d.porcentaje_descuento, si.url_imagen, n.nombre_comercial, s.fecha_registro
+         ORDER BY s.fecha_registro DESC, s.nombre ASC`
+      );
+
+      return res.status(200).json({
+        total: result.rows.length,
+        servicios: result.rows.map((servicio) => ({
+          id: servicio.id,
+          nombre: servicio.nombre,
+          calificacion: servicio.calificacion !== null ? Number(servicio.calificacion) : null,
+          precio_original: Number(servicio.precio_original),
+          precio: Number(servicio.precio),
+          porcentaje_descuento: servicio.porcentaje_descuento !== null ? Number(servicio.porcentaje_descuento) : null,
+          imagen_principal: servicio.imagen_principal,
+          empresa: servicio.empresa,
+          numero_resenas: Number(servicio.numero_resenas),
+        })),
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ mensaje: "Error al obtener servicios con descuento" });
     }
   });
 
@@ -310,12 +663,6 @@ function createCompradorRouter({ pool }) {
              '[]'::json
            ) AS galeria_imagenes,
            COALESCE(n.nombre_comercial, '') AS empresa,
-           n.id AS id_negocio,
-           d_dir.calle AS dir_calle,
-           d_dir.ciudad AS dir_ciudad,
-           d_dir.estado AS dir_estado,
-           d_dir.codigo_postal AS dir_codigo_postal,
-           d_dir.pais AS dir_pais,
            COALESCE(
              (
                SELECT COUNT(*)
@@ -335,7 +682,6 @@ function createCompradorRouter({ pool }) {
            ) AS categorias
          FROM productos p
          LEFT JOIN negocios n ON n.id = p.id_negocio
-         LEFT JOIN direcciones d_dir ON d_dir.id = n.id_direccion
          LEFT JOIN descuentos d ON d.id = p.id_descuento
          LEFT JOIN producto_imagenes img ON img.id_producto = p.id AND img.es_principal = TRUE
          WHERE p.id = $1
@@ -380,15 +726,6 @@ function createCompradorRouter({ pool }) {
           imagen_principal: producto.imagen_principal,
           galeria_imagenes: producto.galeria_imagenes,
           empresa: producto.empresa,
-          id_negocio: producto.id_negocio,
-          sucursal: {
-            nombre: producto.empresa,
-            calle: producto.dir_calle,
-            ciudad: producto.dir_ciudad,
-            estado: producto.dir_estado,
-            codigo_postal: producto.dir_codigo_postal,
-            pais: producto.dir_pais,
-          },
           stock_total: Number(producto.stock_total),
           numero_resenas: Number(producto.numero_resenas),
           categorias: producto.categorias,
@@ -581,80 +918,6 @@ function createCompradorRouter({ pool }) {
     } catch (error) {
       console.error(error);
       return res.status(500).json({ mensaje: "Error al obtener detalle del servicio" });
-    }
-  });
-
-  // ── Crear reseña (requiere sesión) ────────────────────────────────────────
-  router.post("/comprador/resenas", async (req, res) => {
-    const idUsuario = Number(req.session?.usuario_id || 0);
-    if (!Number.isInteger(idUsuario) || idUsuario <= 0) {
-      return res.status(401).json({ mensaje: "Debes iniciar sesion" });
-    }
-
-    const { tipo, id_item, calificacion, comentario } = req.body;
-
-    // Validaciones
-    if (!tipo || !["producto", "servicio"].includes(String(tipo))) {
-      return res.status(400).json({ mensaje: "tipo debe ser 'producto' o 'servicio'" });
-    }
-
-    const idItem = Number(id_item);
-    if (!Number.isInteger(idItem) || idItem <= 0) {
-      return res.status(400).json({ mensaje: "id_item invalido" });
-    }
-
-    const calNum = Number(calificacion);
-    if (!Number.isInteger(calNum) || calNum < 1 || calNum > 5) {
-      return res.status(400).json({ mensaje: "calificacion debe ser entre 1 y 5" });
-    }
-
-    if (!comentario || String(comentario).trim().length < 10) {
-      return res.status(400).json({ mensaje: "El comentario debe tener al menos 10 caracteres" });
-    }
-
-    try {
-      // Verificar que el item existe
-      if (tipo === "producto") {
-        const prod = await pool.query(
-          "SELECT id FROM productos WHERE id = $1 AND esta_activo = TRUE LIMIT 1",
-          [idItem]
-        );
-        if (prod.rows.length === 0) {
-          return res.status(404).json({ mensaje: "Producto no encontrado" });
-        }
-      } else {
-        const serv = await pool.query(
-          "SELECT id FROM servicios WHERE id = $1 AND esta_activo = TRUE LIMIT 1",
-          [idItem]
-        );
-        if (serv.rows.length === 0) {
-          return res.status(404).json({ mensaje: "Servicio no encontrado" });
-        }
-      }
-
-      // Verificar si ya dejó una reseña
-      const yaExiste = await pool.query(
-        `SELECT id FROM resenas WHERE id_usuario = $1 AND ${tipo === "producto" ? "id_producto" : "id_servicio"} = $2 LIMIT 1`,
-        [idUsuario, idItem]
-      );
-      if (yaExiste.rows.length > 0) {
-        return res.status(409).json({ mensaje: "Ya has dejado una resena para este item" });
-      }
-
-      const result = await pool.query(
-        `INSERT INTO resenas (id_usuario, ${tipo === "producto" ? "id_producto" : "id_servicio"}, calificacion, comentario)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, calificacion, comentario, compra_verificada, fecha_creacion`,
-        [idUsuario, idItem, calNum, String(comentario).trim()]
-      );
-
-      return res.status(201).json({
-        mensaje: "Resena creada exitosamente",
-        resena: result.rows[0],
-      });
-    } catch (error) {
-      console.error(error);
-      return res.status(500).json({ mensaje: "Error al crear resena" });
     }
   });
 

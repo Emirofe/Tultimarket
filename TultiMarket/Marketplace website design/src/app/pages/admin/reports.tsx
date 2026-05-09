@@ -9,6 +9,7 @@ import {
   desestimarReporteApi,
   eliminarContenidoReporteApi,
   updateEstadoReporteApi,
+  deleteReporteApi,
   type RawReporteAdmin,
 } from "../../api/api-client";
 
@@ -113,16 +114,26 @@ export function AdminReportsPage() {
         case "Advertencia formal":
           await advertenciaReporteApi(id);
           break;
-        case "Suspensión temporal":
-          await suspensionReporteApi(id, 7); // 7 días por defecto
+        case "Suspensión temporal": {
+          const diasInput = window.prompt("\u00bfCu\u00e1ntos d\u00edas de suspensi\u00f3n?", "7");
+          if (!diasInput) return;
+          const dias = parseInt(diasInput, 10);
+          if (isNaN(dias) || dias <= 0) { toast.error("N\u00famero de d\u00edas inv\u00e1lido"); return; }
+          await suspensionReporteApi(id, dias);
           break;
+        }
         case "Bloqueo permanente":
+          if (!window.confirm("\u00bfConfirmas el bloqueo PERMANENTE de esta cuenta? Esta acci\u00f3n no se puede deshacer.")) return;
           await bloqueoReporteApi(id, report.motivo);
           break;
-        case "Desestimado":
-          await desestimarReporteApi(id, "Sin fundamento suficiente");
+        case "Desestimado": {
+          const razon = window.prompt("Raz\u00f3n para desestimar el reporte:", "Sin fundamento suficiente");
+          if (!razon) return;
+          await desestimarReporteApi(id, razon);
           break;
+        }
         case "Contenido eliminado":
+          if (!window.confirm("\u00bfConfirmas la eliminaci\u00f3n del contenido reportado?")) return;
           await eliminarContenidoReporteApi(id, report.motivo);
           break;
         default:
@@ -147,6 +158,18 @@ export function AdminReportsPage() {
       toast.success(messages[newStatus] || `Estado actualizado a ${newStatus}.`);
     } catch (err: any) {
       toast.error(err.message || "Error al actualizar reporte");
+    }
+  };
+
+  // Eliminar reporte permanentemente de la BD
+  const handleDelete = async (report: ReporteFront) => {
+    if (!window.confirm(`¿Eliminar permanentemente el reporte #${report.id}? Esta acción no se puede deshacer.`)) return;
+    try {
+      await deleteReporteApi(report.id);
+      setReports((prev) => prev.filter((r) => r.id !== report.id));
+      toast.success(`Reporte #${report.id} eliminado permanentemente.`);
+    } catch (err: any) {
+      toast.error(err.message || "Error al eliminar reporte");
     }
   };
 
@@ -245,6 +268,20 @@ export function AdminReportsPage() {
                   <p className="text-muted-foreground mb-1" style={{ fontSize: 13 }}>Descripcion detallada</p>
                   <p className="text-muted-foreground" style={{ fontSize: 14 }}>{report.descripcion}</p>
                 </div>
+                {["Resuelto", "Bloqueo permanente", "Desestimado", "Contenido eliminado", "Suspensión temporal"].includes(report.estado_reporte) ? (
+                  <div>
+                    <p className="text-muted-foreground italic mb-3" style={{ fontSize: 14 }}>
+                      Este reporte ya fue procesado con resultado: <span className="font-semibold">{report.estado_reporte}</span>
+                    </p>
+                    <button
+                      onClick={() => handleDelete(report)}
+                      className="flex items-center gap-1 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+                      style={{ fontSize: 13 }}
+                    >
+                      <Trash2 size={14} /> Eliminar reporte de la base de datos
+                    </button>
+                  </div>
+                ) : (
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => handleAction(report, "Resuelto")}
@@ -261,11 +298,11 @@ export function AdminReportsPage() {
                     <AlertTriangle size={16} /> Advertencia formal
                   </button>
                   <button
-                    onClick={() => handleAction(report, "Suspensión temporal")}
+                    onClick={() => handleAction(report, "Suspensi\u00f3n temporal")}
                     className="flex items-center gap-1 px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600"
                     style={{ fontSize: 14 }}
                   >
-                    <ShieldOff size={16} /> Suspensión temporal
+                    <ShieldOff size={16} /> Suspensi\u00f3n temporal
                   </button>
                   <button
                     onClick={() => handleAction(report, "Bloqueo permanente")}
@@ -289,6 +326,7 @@ export function AdminReportsPage() {
                     <X size={16} /> Desestimar
                   </button>
                 </div>
+                )}
               </div>
             )}
           </div>

@@ -113,7 +113,7 @@ export async function loginApi(
  * NOTA: El backend NO retorna "rol" ni "telefono" en el registro,
  * solo id/nombre/email. El mapper debe manejar campos faltantes.
  *
- * id_rol: 1=cliente, 2=vendedor, 3=admin  (ver LLENADO.sql)
+ * id_rol: 1=cliente, 2=vendedor, 3=admin  (tabla roles)
  */
 export async function registerApi(
   nombre: string,
@@ -121,7 +121,7 @@ export async function registerApi(
   password: string,
   rol: "comprador" | "vendedor" = "comprador"
 ): Promise<User> {
-  const id_rol = rol === "vendedor" ? 3 : 2;
+  const id_rol = rol === "vendedor" ? 2 : 1;
   const data = await api<{
     usuario: { id: number; nombre: string; email: string };
   }>("/registrar", {
@@ -177,6 +177,42 @@ export async function getCategoriasApi(tipo?: "producto" | "servicio" | "ambos")
   const endpoint = tipo ? `/api/vendedor/categorias${query}` : "/comprador/categorias";
   const data = await api<RawCategoria[]>(endpoint);
   return data.map(mapCategoria);
+}
+
+/**
+ * GET /comprador/productos
+ * Devuelve TODOS los productos activos (sin filtro de categoría).
+ */
+export async function getAllProductosApi(filtros?: {
+  q?: string;
+  precio_min?: number;
+  precio_max?: number;
+  calificacion_min?: number;
+  ordenar?: string;
+}): Promise<Product[]> {
+  const params = new URLSearchParams();
+  if (filtros?.q) params.set("q", filtros.q);
+  if (filtros?.precio_min !== undefined) params.set("precio_min", String(filtros.precio_min));
+  if (filtros?.precio_max !== undefined) params.set("precio_max", String(filtros.precio_max));
+  if (filtros?.calificacion_min !== undefined)
+    params.set("calificacion_min", String(filtros.calificacion_min));
+  if (filtros?.ordenar) params.set("ordenar", filtros.ordenar);
+
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const data = await api<{ productos: RawProductoLista[] }>(
+    `/comprador/productos${query}`
+  );
+  return data.productos.map(mapProductoLista);
+}
+
+/**
+ * GET /comprador/categorias/top
+ * Top 10 categorías raíz por cantidad de productos.
+ * Usado por el navbar para navegación rápida.
+ */
+export async function getTopCategoriasApi(): Promise<{ id: string; name: string; total: number }[]> {
+  const data = await api<{ id: number; nombre: string; total: number }[]>("/comprador/categorias/top");
+  return data.map((c) => ({ id: String(c.id), name: c.nombre, total: c.total }));
 }
 
 /**
@@ -518,6 +554,7 @@ export async function getCarritoApi() {
       nombre: string;
       imagen: string | null;
       stock_maximo: number;
+      precio_unitario_original: number;
       empresa: string;
       cantidad: number;
       precio_unitario: number;
@@ -843,7 +880,7 @@ export async function createProductoVendedorApi(datos: {
   sku?: string;
   stock_total?: number;
   imagenes?: string[];
-  id_categorias?: number[];
+  id_descuento?: number;
 }) {
   return api("/api/vendedor/productos", {
     method: "POST",
@@ -934,7 +971,7 @@ export async function createServicioVendedorApi(datos: {
   duracion_minutos?: number;
   id_negocio: number;
   imagenes?: string[];
-  id_categorias?: number[];
+  id_descuento?: number;
 }) {
   return api("/api/vendedor/servicios", {
     method: "POST",
@@ -1033,14 +1070,116 @@ export async function createNegocioVendedorApi(datos: {
   });
 }
 
+/**
+ * PUT /api/vendedor/negocio
+ * Actualiza los datos del negocio existente.
+ */
+export async function updateNegocioVendedorApi(datos: {
+  nombre_comercial: string;
+  rfc_tax_id?: string;
+  logo_url?: string;
+  calle: string;
+  ciudad: string;
+  estado: string;
+  codigo_postal: string;
+  pais: string;
+  latitud: number;
+  longitud: number;
+}) {
+  return api<{ status: string; mensaje: string; negocio: any }>("/api/vendedor/negocio", {
+    method: "PUT",
+    body: JSON.stringify(datos),
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// ADMIN: PEDIDOS
+// CATÁLOGO COMPRADOR: Listados globales y ofertas
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * GET /admin/pedidos
- * Lista todos los pedidos del sistema (vista global admin).
+ * GET /comprador/productos
+ * Listado global de productos (sin filtrar por categoría).
  */
+export async function getProductosGlobalApi(
+  filtros?: {
+    q?: string;
+    precio_min?: number;
+    precio_max?: number;
+    calificacion_min?: number;
+    ordenar?: string;
+  }
+): Promise<Product[]> {
+  const params = new URLSearchParams();
+  if (filtros?.q) params.set("q", filtros.q);
+  if (filtros?.precio_min !== undefined) params.set("precio_min", String(filtros.precio_min));
+  if (filtros?.precio_max !== undefined) params.set("precio_max", String(filtros.precio_max));
+  if (filtros?.calificacion_min !== undefined) params.set("calificacion_min", String(filtros.calificacion_min));
+  if (filtros?.ordenar) params.set("ordenar", filtros.ordenar);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const data = await api<{ productos: RawProductoLista[] }>(`/comprador/productos${query}`);
+  return data.productos.map(mapProductoLista);
+}
+
+/**
+ * GET /comprador/servicios
+ * Listado global de servicios (sin filtrar por categoría).
+ */
+export async function getServiciosGlobalApi(
+  filtros?: {
+    q?: string;
+    precio_min?: number;
+    precio_max?: number;
+    calificacion_min?: number;
+    ordenar?: string;
+  }
+): Promise<Product[]> {
+  const params = new URLSearchParams();
+  if (filtros?.q) params.set("q", filtros.q);
+  if (filtros?.precio_min !== undefined) params.set("precio_min", String(filtros.precio_min));
+  if (filtros?.precio_max !== undefined) params.set("precio_max", String(filtros.precio_max));
+  if (filtros?.calificacion_min !== undefined) params.set("calificacion_min", String(filtros.calificacion_min));
+  if (filtros?.ordenar) params.set("ordenar", filtros.ordenar);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const data = await api<{ servicios: RawProductoLista[] }>(`/comprador/servicios${query}`);
+  return data.servicios.map((raw) => {
+    const p = mapProductoLista(raw);
+    return { ...p, type: "servicio" as const };
+  });
+}
+
+/**
+ * GET /comprador/productos/descuentos
+ * Productos con descuento activo.
+ */
+export async function getProductosConDescuentoApi(): Promise<Product[]> {
+  const data = await api<{ total: number; productos: RawProductoLista[] }>("/comprador/productos/descuentos");
+  return data.productos.map(mapProductoLista);
+}
+
+/**
+ * GET /comprador/servicios/descuentos
+ * Servicios con descuento activo.
+ */
+export async function getServiciosConDescuentoApi(): Promise<Product[]> {
+  const data = await api<{ total: number; servicios: RawProductoLista[] }>("/comprador/servicios/descuentos");
+  return data.servicios.map((raw) => {
+    const p = mapProductoLista(raw);
+    return { ...p, type: "servicio" as const };
+  });
+}
+
+/**
+ * GET /:perfil/mis-pedidos/:pedidoId
+ * Detalle de un pedido individual del comprador.
+ */
+export async function getPedidoDetalleCompradorApi(pedidoId: string | number) {
+  return api<{ status: string; pedido: any }>(`/comprador/mis-pedidos/${pedidoId}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN: CATÁLOGO (moderación de productos y servicios)
+// ─────────────────────────────────────────────────────────────────────────────
+
 export type AdminCatalogItem = {
   id: number;
   nombre: string;
@@ -1098,78 +1237,6 @@ export async function updateAdminEstadoServicioApi(
       body: JSON.stringify({ estado }),
     }
   );
-}
-
-export async function getPedidosAdminApi(): Promise<Order[]> {
-  const data = await api<{ pedidos: RawPedido[] }>("/admin/pedidos");
-  return data.pedidos.map(mapPedidoVendedor);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ADMIN: CATÁLOGO (moderación de productos y servicios)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Producto crudo que devuelve GET /admin/catalogo/productos */
-export interface RawCatalogoProducto {
-  id: number;
-  nombre: string;
-  descripcion: string | null;
-  precio: number;
-  precio_con_descuento: number;
-  id_descuento: number | null;
-  stock_total: number;
-  esta_activo: boolean;
-  estado_catalogo: string;
-  fecha_registro: string;
-  negocio: string;
-}
-
-/** Servicio crudo que devuelve GET /admin/catalogo/servicios */
-export interface RawCatalogoServicio {
-  id: number;
-  nombre: string;
-  descripcion: string | null;
-  precio_base: number;
-  precio_con_descuento: number;
-  id_descuento: number | null;
-  esta_activo: boolean;
-  estado_catalogo: string;
-  fecha_registro: string;
-  negocio: string;
-}
-
-/** GET /admin/catalogo/productos */
-export async function getCatalogoProductosAdminApi() {
-  return api<{
-    status: string;
-    total: number;
-    productos: RawCatalogoProducto[];
-  }>("/admin/catalogo/productos");
-}
-
-/** GET /admin/catalogo/servicios */
-export async function getCatalogoServiciosAdminApi() {
-  return api<{
-    status: string;
-    total: number;
-    servicios: RawCatalogoServicio[];
-  }>("/admin/catalogo/servicios");
-}
-
-/** PATCH /admin/catalogo/productos/:id/estado  —  body: { estado: "APROBADO"|"RECHAZADO" } */
-export async function updateEstadoCatalogoProductoApi(id: number, estado: "APROBADO" | "RECHAZADO") {
-  return api<{ status: string; mensaje: string; data: any }>(`/admin/catalogo/productos/${id}/estado`, {
-    method: "PATCH",
-    body: JSON.stringify({ estado }),
-  });
-}
-
-/** PATCH /admin/catalogo/servicios/:id/estado  —  body: { estado: "APROBADO"|"RECHAZADO" } */
-export async function updateEstadoCatalogoServicioApi(id: number, estado: "APROBADO" | "RECHAZADO") {
-  return api<{ status: string; mensaje: string; data: any }>(`/admin/catalogo/servicios/${id}/estado`, {
-    method: "PATCH",
-    body: JSON.stringify({ estado }),
-  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

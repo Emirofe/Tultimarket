@@ -303,18 +303,29 @@ function createAdminReportesRouter({ pool }) {
     if (!Number.isInteger(dias) || dias <= 0)
       return res.status(400).json({ status: "error", mensaje: "dias debe ser un numero positivo" });
 
+    const client = await pool.connect();
     try {
-      const reporteResult = await pool.query(
+      await client.query("BEGIN");
+
+      const reporteResult = await client.query(
         `SELECT id_usuario FROM reportes WHERE id = $1 LIMIT 1`,
         [id]
       );
 
-      if (reporteResult.rows.length === 0)
+      if (reporteResult.rows.length === 0) {
+        await client.query("ROLLBACK");
         return res.status(404).json({ status: "error", mensaje: "Reporte no encontrado" });
+      }
 
       const idUsuario = reporteResult.rows[0].id_usuario;
 
-      const updateResult = await pool.query(
+      // Desactivar la cuenta del usuario reportado
+      await client.query(
+        `UPDATE usuarios SET activo = FALSE WHERE id = $1`,
+        [idUsuario]
+      );
+
+      const updateResult = await client.query(
         `UPDATE reportes
          SET estado_reporte = 'SUSPENSION_TEMPORAL',
              fecha_resolucion = CURRENT_TIMESTAMP
@@ -322,6 +333,8 @@ function createAdminReportesRouter({ pool }) {
          RETURNING id, id_usuario, estado_reporte, fecha_resolucion`,
         [id]
       );
+
+      await client.query("COMMIT");
 
       return res.status(200).json({
         status: "success",
@@ -333,8 +346,11 @@ function createAdminReportesRouter({ pool }) {
         reporte: updateResult.rows[0],
       });
     } catch (error) {
+      await client.query("ROLLBACK");
       console.error(error);
       return res.status(500).json({ status: "error", mensaje: "Error al aplicar suspension" });
+    } finally {
+      client.release();
     }
   });
 
@@ -350,18 +366,29 @@ function createAdminReportesRouter({ pool }) {
     if (!razon)
       return res.status(400).json({ status: "error", mensaje: "razon es obligatoria" });
 
+    const client = await pool.connect();
     try {
-      const reporteResult = await pool.query(
+      await client.query("BEGIN");
+
+      const reporteResult = await client.query(
         `SELECT id_usuario FROM reportes WHERE id = $1 LIMIT 1`,
         [id]
       );
 
-      if (reporteResult.rows.length === 0)
+      if (reporteResult.rows.length === 0) {
+        await client.query("ROLLBACK");
         return res.status(404).json({ status: "error", mensaje: "Reporte no encontrado" });
+      }
 
       const idUsuario = reporteResult.rows[0].id_usuario;
 
-      const updateResult = await pool.query(
+      // Bloquear la cuenta del usuario permanentemente
+      await client.query(
+        `UPDATE usuarios SET activo = FALSE, fecha_eliminacion = NOW() WHERE id = $1`,
+        [idUsuario]
+      );
+
+      const updateResult = await client.query(
         `UPDATE reportes
          SET estado_reporte = 'BLOQUEO_PERMANENTE',
              fecha_resolucion = CURRENT_TIMESTAMP
@@ -369,6 +396,8 @@ function createAdminReportesRouter({ pool }) {
          RETURNING id, id_usuario, estado_reporte, fecha_resolucion`,
         [id]
       );
+
+      await client.query("COMMIT");
 
       return res.status(200).json({
         status: "success",
@@ -379,8 +408,11 @@ function createAdminReportesRouter({ pool }) {
         reporte: updateResult.rows[0],
       });
     } catch (error) {
+      await client.query("ROLLBACK");
       console.error(error);
       return res.status(500).json({ status: "error", mensaje: "Error al aplicar bloqueo" });
+    } finally {
+      client.release();
     }
   });
 
@@ -396,14 +428,19 @@ function createAdminReportesRouter({ pool }) {
     if (!razon)
       return res.status(400).json({ status: "error", mensaje: "razon es obligatoria" });
 
+    const client = await pool.connect();
     try {
-      const reporteResult = await pool.query(
+      await client.query("BEGIN");
+
+      const reporteResult = await client.query(
         `SELECT id_usuario, id_producto, id_servicio FROM reportes WHERE id = $1 LIMIT 1`,
         [id]
       );
 
-      if (reporteResult.rows.length === 0)
+      if (reporteResult.rows.length === 0) {
+        await client.query("ROLLBACK");
         return res.status(404).json({ status: "error", mensaje: "Reporte no encontrado" });
+      }
 
       const {
         id_usuario: idUsuario,
@@ -414,7 +451,20 @@ function createAdminReportesRouter({ pool }) {
       const tipo_objetivo = idProducto ? "producto" : "servicio";
       const id_objetivo = idProducto || idServicio;
 
-      const updateResult = await pool.query(
+      // Desactivar el producto o servicio reportado
+      if (idProducto) {
+        await client.query(
+          `UPDATE productos SET esta_activo = FALSE WHERE id = $1`,
+          [idProducto]
+        );
+      } else if (idServicio) {
+        await client.query(
+          `UPDATE servicios SET esta_activo = FALSE WHERE id = $1`,
+          [idServicio]
+        );
+      }
+
+      const updateResult = await client.query(
         `UPDATE reportes
          SET estado_reporte = 'CONTENIDO_ELIMINADO',
              fecha_resolucion = CURRENT_TIMESTAMP
@@ -422,6 +472,8 @@ function createAdminReportesRouter({ pool }) {
          RETURNING id, id_usuario, estado_reporte, fecha_resolucion`,
         [id]
       );
+
+      await client.query("COMMIT");
 
       return res.status(200).json({
         status: "success",
@@ -434,8 +486,11 @@ function createAdminReportesRouter({ pool }) {
         reporte: updateResult.rows[0],
       });
     } catch (error) {
+      await client.query("ROLLBACK");
       console.error(error);
       return res.status(500).json({ status: "error", mensaje: "Error al eliminar contenido" });
+    } finally {
+      client.release();
     }
   });
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router";
 import {
   Search,
@@ -11,12 +11,14 @@ import {
   Package,
   Settings,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Store,
   Brain,
 } from "lucide-react";
 import { useStore } from "../../context/store-context";
 import { products } from "../../data/mock-data";
-import { getCategoriasApi } from "../../api/api-client";
+import { getTopCategoriasApi } from "../../api/api-client";
 
 export function Navbar() {
   const { currentUser, isLoggedIn, logout, getCartCount, wishlist } = useStore();
@@ -24,12 +26,13 @@ export function Navbar() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
+  const [topCategories, setTopCategories] = useState<{ id: string; name: string; total: number }[]>([]);
+  const navScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    getCategoriasApi()
-      .then((cats) => setCategories(cats))
-      .catch(() => setCategories([]));
+    getTopCategoriasApi()
+      .then((cats) => setTopCategories(cats))
+      .catch(() => setTopCategories([]));
   }, []);
   const navigate = useNavigate();
   const cartCount = getCartCount();
@@ -241,28 +244,45 @@ export function Navbar() {
         </div>
       </div>
 
-      {/* Category bar */}
-      <div className="bg-[#121E2B] overflow-x-auto">
-        <div className="max-w-7xl mx-auto px-4 flex items-center gap-1">
-          <Link
-            to="/"
-            className="px-3 py-2 whitespace-nowrap hover:bg-white/10 rounded transition-colors"
-            style={{ fontSize: 13 }}
-          >
-            Todos
-          </Link>
-          {categories.map((cat) => (
-            <Link
-              key={cat.id}
-              to={`/?categoria=${cat.id}`}
-              className="px-3 py-2 whitespace-nowrap hover:bg-white/10 rounded transition-colors"
-              style={{ fontSize: 13 }}
+      {/* Category quick-nav bar — top 10 por popularidad */}
+      {topCategories.length > 0 && (
+        <div className="bg-[#0D1820] border-t border-white/10">
+          <div className="max-w-7xl mx-auto px-4 flex items-center gap-2">
+            <button
+              onClick={() => navScrollRef.current?.scrollBy({ left: -250, behavior: "smooth" })}
+              className="flex-shrink-0 p-1 rounded-full hover:bg-white/10 transition-colors text-white/50 hover:text-white/80"
             >
-              {cat.name}
-            </Link>
-          ))}
+              <ChevronLeft size={16} />
+            </button>
+            <div
+              ref={navScrollRef}
+              className="flex items-center gap-1 overflow-x-auto py-1"
+              style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+            >
+              {topCategories.map((cat, idx) => (
+                <span key={cat.id} className="flex items-center">
+                  <Link
+                    to={`/?cat=${cat.id}`}
+                    className="px-3 py-1.5 whitespace-nowrap hover:text-amber-300 rounded transition-colors text-white/80 hover:bg-white/5"
+                    style={{ fontSize: 13 }}
+                  >
+                    {cat.name}
+                  </Link>
+                  {idx < topCategories.length - 1 && (
+                    <span className="text-white/20">·</span>
+                  )}
+                </span>
+              ))}
+            </div>
+            <button
+              onClick={() => navScrollRef.current?.scrollBy({ left: 250, behavior: "smooth" })}
+              className="flex-shrink-0 p-1 rounded-full hover:bg-white/10 transition-colors text-white/50 hover:text-white/80"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Mobile menu */}
       {mobileMenuOpen && (

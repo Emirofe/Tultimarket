@@ -3,25 +3,25 @@ const express = require("express");
 function createVendedorDescuentosRouter({ pool }) {
   const router = express.Router();
 
-  // Calcula si un descuento está vigente, próximo o expirado según sus fechas.
   function obtenerFechaEstado(fechaInicio, fechaFin) {
     const ahora = Date.now();
     const inicio = fechaInicio ? new Date(fechaInicio).getTime() : NaN;
     const fin = fechaFin ? new Date(fechaFin).getTime() : NaN;
 
-    if (Number.isNaN(inicio) || Number.isNaN(fin)) return "sin_fechas";
+    if (Number.isNaN(inicio) || Number.isNaN(fin)) {
+      return "expirado";
+    }
+
     if (ahora < inicio) return "proximo";
     if (ahora > fin) return "expirado";
     return "vigente";
   }
 
-  // Intenta parsear una fecha y devuelve null si es inválida.
   function parseFecha(valor) {
     const fecha = new Date(valor);
     return Number.isNaN(fecha.getTime()) ? null : fecha;
   }
 
-  // Busca un descuento por ID.
   async function verificarDescuento(idDescuento) {
     const result = await pool.query(
       `SELECT id, codigo_cupon, porcentaje_descuento, fecha_inicio, fecha_fin
@@ -30,13 +30,17 @@ function createVendedorDescuentosRouter({ pool }) {
       [idDescuento]
     );
 
-    if (result.rows.length === 0) return null;
+    if (result.rows.length === 0) {
+      return null;
+    }
+
     return result.rows[0];
   }
 
-  // Verifica si un código de cupón ya existe (excluyendo el propio descuento en edición).
   async function existeCodigoCupon(codigoCupon, idExcluir = null) {
-    if (!codigoCupon) return false;
+    if (!codigoCupon) {
+      return false;
+    }
 
     if (idExcluir) {
       const result = await pool.query(
@@ -89,7 +93,9 @@ function createVendedorDescuentosRouter({ pool }) {
       }
 
       const producto = await pool.query(
-        `SELECT id, nombre, precio FROM productos WHERE id = $1`,
+        `SELECT id, nombre, precio
+         FROM productos
+         WHERE id = $1`,
         [idProducto]
       );
 
@@ -175,7 +181,9 @@ function createVendedorDescuentosRouter({ pool }) {
       }
 
       const servicio = await pool.query(
-        `SELECT id, nombre, precio_base FROM servicios WHERE id = $1`,
+        `SELECT id, nombre, precio_base
+         FROM servicios
+         WHERE id = $1`,
         [idServicio]
       );
 
@@ -233,7 +241,8 @@ function createVendedorDescuentosRouter({ pool }) {
    * PUT - Actualizar un descuento asignado a un producto
    * Ruta: /api/vendedor/productos/:id/descuentos/:id_descuento
    * Body: { codigo_cupon?, porcentaje_descuento?, fecha_inicio?, fecha_fin? }
-   * Campos omitidos conservan el valor actual del descuento.
+   * Valida: producto existente y relacion producto -> id_descuento.
+   * Nota: campos omitidos conservan el valor actual del descuento.
    */
   router.put("/api/vendedor/productos/:id/descuentos/:id_descuento", async (req, res) => {
     try {
@@ -250,7 +259,9 @@ function createVendedorDescuentosRouter({ pool }) {
       }
 
       const producto = await pool.query(
-        `SELECT id, id_descuento FROM productos WHERE id = $1`,
+        `SELECT id, id_descuento
+         FROM productos
+         WHERE id = $1`,
         [idProducto]
       );
 
@@ -275,17 +286,13 @@ function createVendedorDescuentosRouter({ pool }) {
             : String(codigo_cupon).trim().toUpperCase();
 
       const nuevoPorcentaje =
-        porcentaje_descuento === undefined
-          ? Number(descuentoActual.porcentaje_descuento)
-          : Number(porcentaje_descuento);
+        porcentaje_descuento === undefined ? Number(descuentoActual.porcentaje_descuento) : Number(porcentaje_descuento);
       if (!Number.isFinite(nuevoPorcentaje) || nuevoPorcentaje < 0 || nuevoPorcentaje > 100) {
         return res.status(400).json({ error: "porcentaje_descuento debe ser un numero entre 0 y 100" });
       }
 
-      const nuevaFechaInicio =
-        fecha_inicio === undefined ? new Date(descuentoActual.fecha_inicio) : parseFecha(fecha_inicio);
-      const nuevaFechaFin =
-        fecha_fin === undefined ? new Date(descuentoActual.fecha_fin) : parseFecha(fecha_fin);
+      const nuevaFechaInicio = fecha_inicio === undefined ? new Date(descuentoActual.fecha_inicio) : parseFecha(fecha_inicio);
+      const nuevaFechaFin = fecha_fin === undefined ? new Date(descuentoActual.fecha_fin) : parseFecha(fecha_fin);
       if (!nuevaFechaInicio || !nuevaFechaFin) {
         return res.status(400).json({ error: "Formato de fechas invalido" });
       }
@@ -329,7 +336,8 @@ function createVendedorDescuentosRouter({ pool }) {
    * PUT - Actualizar un descuento asignado a un servicio
    * Ruta: /api/vendedor/servicios/:id/descuentos/:id_descuento
    * Body: { codigo_cupon?, porcentaje_descuento?, fecha_inicio?, fecha_fin? }
-   * Campos omitidos conservan el valor actual del descuento.
+   * Valida: servicio existente y relacion servicio -> id_descuento.
+   * Nota: campos omitidos conservan el valor actual del descuento.
    */
   router.put("/api/vendedor/servicios/:id/descuentos/:id_descuento", async (req, res) => {
     try {
@@ -346,7 +354,9 @@ function createVendedorDescuentosRouter({ pool }) {
       }
 
       const servicio = await pool.query(
-        `SELECT id, id_descuento FROM servicios WHERE id = $1`,
+        `SELECT id, id_descuento
+         FROM servicios
+         WHERE id = $1`,
         [idServicio]
       );
 
@@ -371,17 +381,13 @@ function createVendedorDescuentosRouter({ pool }) {
             : String(codigo_cupon).trim().toUpperCase();
 
       const nuevoPorcentaje =
-        porcentaje_descuento === undefined
-          ? Number(descuentoActual.porcentaje_descuento)
-          : Number(porcentaje_descuento);
+        porcentaje_descuento === undefined ? Number(descuentoActual.porcentaje_descuento) : Number(porcentaje_descuento);
       if (!Number.isFinite(nuevoPorcentaje) || nuevoPorcentaje < 0 || nuevoPorcentaje > 100) {
         return res.status(400).json({ error: "porcentaje_descuento debe ser un numero entre 0 y 100" });
       }
 
-      const nuevaFechaInicio =
-        fecha_inicio === undefined ? new Date(descuentoActual.fecha_inicio) : parseFecha(fecha_inicio);
-      const nuevaFechaFin =
-        fecha_fin === undefined ? new Date(descuentoActual.fecha_fin) : parseFecha(fecha_fin);
+      const nuevaFechaInicio = fecha_inicio === undefined ? new Date(descuentoActual.fecha_inicio) : parseFecha(fecha_inicio);
+      const nuevaFechaFin = fecha_fin === undefined ? new Date(descuentoActual.fecha_fin) : parseFecha(fecha_fin);
       if (!nuevaFechaInicio || !nuevaFechaFin) {
         return res.status(400).json({ error: "Formato de fechas invalido" });
       }
@@ -422,8 +428,10 @@ function createVendedorDescuentosRouter({ pool }) {
   });
 
   /**
-   * DELETE - Quitar descuento de un producto (pone id_descuento = NULL)
+   * DELETE - Quitar descuento de un producto
    * Ruta: /api/vendedor/productos/:id/descuentos/:id_descuento
+   * Valida: producto existente y que tenga asignado ese id_descuento.
+   * Resultado: deja productos.id_descuento en NULL.
    */
   router.delete("/api/vendedor/productos/:id/descuentos/:id_descuento", async (req, res) => {
     try {
@@ -439,7 +447,9 @@ function createVendedorDescuentosRouter({ pool }) {
       }
 
       const producto = await pool.query(
-        `SELECT id, id_descuento FROM productos WHERE id = $1`,
+        `SELECT id, id_descuento
+         FROM productos
+         WHERE id = $1`,
         [idProducto]
       );
 
@@ -452,7 +462,9 @@ function createVendedorDescuentosRouter({ pool }) {
       }
 
       await pool.query(
-        `UPDATE productos SET id_descuento = NULL WHERE id = $1`,
+        `UPDATE productos
+         SET id_descuento = NULL
+         WHERE id = $1`,
         [idProducto]
       );
 
@@ -468,8 +480,10 @@ function createVendedorDescuentosRouter({ pool }) {
   });
 
   /**
-   * DELETE - Quitar descuento de un servicio (pone id_descuento = NULL)
+   * DELETE - Quitar descuento de un servicio
    * Ruta: /api/vendedor/servicios/:id/descuentos/:id_descuento
+   * Valida: servicio existente y que tenga asignado ese id_descuento.
+   * Resultado: deja servicios.id_descuento en NULL.
    */
   router.delete("/api/vendedor/servicios/:id/descuentos/:id_descuento", async (req, res) => {
     try {
@@ -485,7 +499,9 @@ function createVendedorDescuentosRouter({ pool }) {
       }
 
       const servicio = await pool.query(
-        `SELECT id, id_descuento FROM servicios WHERE id = $1`,
+        `SELECT id, id_descuento
+         FROM servicios
+         WHERE id = $1`,
         [idServicio]
       );
 
@@ -498,7 +514,9 @@ function createVendedorDescuentosRouter({ pool }) {
       }
 
       await pool.query(
-        `UPDATE servicios SET id_descuento = NULL WHERE id = $1`,
+        `UPDATE servicios
+         SET id_descuento = NULL
+         WHERE id = $1`,
         [idServicio]
       );
 

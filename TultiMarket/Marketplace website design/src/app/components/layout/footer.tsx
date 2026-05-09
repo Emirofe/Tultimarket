@@ -22,7 +22,7 @@ export function Footer() {
               <span style={{ fontSize: 20, fontWeight: 700 }} className="text-white">TultiMarket</span>
             </div>
             <p style={{ fontSize: 14 }}>
-              Tu marketplace de confianza para todo lo que necesitas en fiestas y celebraciones.
+              Tu marketplace de confianza para todo lo que necesites.
             </p>
           </div>
           <div>
@@ -53,13 +53,12 @@ export function Footer() {
             <h4 className="text-white mb-3" style={{ fontSize: 16, fontWeight: 600 }}>Vendedores</h4>
             <div className="space-y-2">
               <Link to="/registro" className="block hover:text-amber-400 transition-colors" style={{ fontSize: 14 }}>Vende con nosotros</Link>
-              <Link to="/vendedor/productos" className="block hover:text-amber-400 transition-colors" style={{ fontSize: 14 }}>Panel de Vendedor</Link>
-              <Link to="/wireframes" className="block hover:text-amber-400 transition-colors" style={{ fontSize: 14 }}>Wireframes / Docs</Link>
+              <Link to="/wireframes" className="block hover:text-amber-400 transition-colors" style={{ fontSize: 14 }}>Wireframes iniciales / Docs</Link>
             </div>
           </div>
         </div>
         <div className="border-t border-white/20 mt-8 pt-6 text-center" style={{ fontSize: 13 }}>
-          <p>&copy; 2026 TultiMarket. Todos los derechos reservados. Contexto: Fiestas</p>
+          <p>&copy; 2026 TultiMarket. Todos los derechos reservados pa los integrantes chambeadores del equipo de "Unicornios Diabeticos"</p>
         </div>
       </div>
     </footer>

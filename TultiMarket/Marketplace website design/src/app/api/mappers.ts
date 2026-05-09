@@ -119,6 +119,7 @@ export interface RawCategoria {
   nombre?: string;
   nombre_categoria?: string;
   tipo: "producto" | "servicio" | "ambos";
+  id_padre?: number | null;
 }
 
 /** Lo que devuelve POST /login y GET /comprador/cuenta */
@@ -371,11 +372,11 @@ export function mapPedidoVendedor(raw: RawPedido): Order {
 
   // Normalizar el estado del pedido al formato del frontend
   const statusMap: Record<string, Order["status"]> = {
-    "PENDIENTE": "En preparacion",
+    "PENDIENTE": "Pendiente",
     "EN PREPARACION": "En preparacion",
     "ENVIADO": "Enviado",
     "ENTREGADO": "Entregado",
-    "CANCELADO": "En preparacion", // fallback
+    "CANCELADO": "Cancelado",
   };
 
   return {
@@ -394,10 +395,11 @@ export function mapPedidoVendedor(raw: RawPedido): Order {
 }
 
 /** Convierte una categoría del back al formato del front */
-export function mapCategoria(raw: RawCategoria): { id: string; name: string; tipo: string } {
+export function mapCategoria(raw: RawCategoria): { id: string; name: string; tipo: string; id_padre: string | null } {
   return {
     id: String(raw.id),
     name: raw.nombre ?? raw.nombre_categoria ?? "",
     tipo: raw.tipo,
+    id_padre: raw.id_padre != null ? String(raw.id_padre) : null,
   };
 }

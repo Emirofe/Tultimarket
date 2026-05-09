@@ -1,44 +1,31 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useSearchParams, Link } from "react-router";
 import { ChevronLeft, ChevronRight, SlidersHorizontal, X, Loader2 } from "lucide-react";
 import { type Product } from "../data/mock-data";
-import { getCategoriasApi, getProductosPorCategoriaApi, getServiciosPorCategoriaApi } from "../api/api-client";
+import { getCategoriasApi, getAllProductosApi, getProductosPorCategoriaApi, getServiciosPorCategoriaApi } from "../api/api-client";
 import { ProductCard } from "../components/product-card";
 import { Navbar } from "../components/layout/navbar";
 import { Footer } from "../components/layout/footer";
 
 const bannerImages = [
   {
-    image: "https://images.unsplash.com/photo-1643537243683-a61ba2e77cf1?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxjb25mZXR0aSUyMGNlbGVicmF0aW9uJTIwZmVzdGl2ZXxlbnwxfHx8fDE3NzI2OTgyODF8MA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-    title: "Gran Venta de Temporada",
-    subtitle: "Hasta 40% de descuento en decoraciones para fiestas",
+    image: "https://images.pexels.com/photos/6207736/pexels-photo-6207736.jpeg",
+    title: "Tu tienda en linea de confianza",
+    subtitle: "Te daremos recomendaciones con base a tus necesidades",
   },
   {
-    image: "https://images.unsplash.com/photo-1759124650346-43900f8479d4?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxiaXJ0aGRheSUyMHBhcnR5JTIwZGVjb3JhdGlvbiUyMHRhYmxlfGVufDF8fHx8MTc3Mjc2NTAxNnww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
+    image: "https://images.pexels.com/photos/5804888/pexels-photo-5804888.jpeg",
     title: "Fiestas Inolvidables",
     subtitle: "Todo para tu celebracion en un solo lugar",
   },
   {
-    image: "https://images.unsplash.com/photo-1763913270132-00b89e7fd5aa?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxwYXJ0eSUyMGhhdHMlMjBjb2xvcmZ1bCUyMGFjY2Vzc29yaWVzfGVufDF8fHx8MTc3Mjc2NTAxN3ww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-    title: "Nuevos Productos",
-    subtitle: "Descubre las ultimas tendencias en accesorios de fiesta",
+    image: "https://images.pexels.com/photos/6296918/pexels-photo-6296918.jpeg",
+    title: "Nuevos productos para tu hogar",
+    subtitle: "Descubre las ultimas tendencias en accesorios",
   },
 ];
 
-// Iconos para las categorías del backend
-const categoryIcons: Record<string, string> = {
-  cumpleanos: "🎂", bodas: "💒", "baby-shower": "👶", "baby shower": "👶",
-  graduacion: "🎓", halloween: "🎃", navidad: "🎄", "xv-anos": "👑", "xv anos": "👑",
-  "fiestas-infantiles": "🎈", "fiestas infantiles": "🎈",
-  "fotografia-evento": "📸", "fotografia de eventos": "📸",
-  "musica-dj": "🎵", "musica y dj": "🎵",
-  "catering-servicio": "🍽️", catering: "🍽️",
-  "decoracion-profesional": "🎨", "decoracion profesional": "🎨",
-  "animacion-fiestas": "🎪", "animacion para fiestas": "🎪",
-  "transporte-evento": "🚐", "transporte para eventos": "🚐",
-  "iluminacion-evento": "💡", "iluminacion de eventos": "💡",
-  "sonido-evento": "🔊", "equipo de sonido": "🔊",
-};
+type CatItem = { id: string; name: string; tipo: string; id_padre: string | null };
 
 export function HomePage() {
   const [searchParams] = useSearchParams();
@@ -48,96 +35,95 @@ export function HomePage() {
   const [minRating, setMinRating] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
 
-  // ─── Estado: 100% desde la base de datos ──────────────────────────────────
+  // ─── Estado de datos ──────────────────────────────────────────────────────
   const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<
-    { id: string; name: string; tipo: string; icon: string }[]
-  >([]);
+  const [allCategories, setAllCategories] = useState<CatItem[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
   const [isLoadingCategories, setIsLoadingCategories] = useState(true);
 
-  const categoryFilter = searchParams.get("categoria");
-  const searchFilter = searchParams.get("buscar");
+  // ─── Selección de categoría jerárquica ─────────────────────────────────────
+  const [selectedLevel1, setSelectedLevel1] = useState<string | null>(null);
+  const [selectedLevel2, setSelectedLevel2] = useState<string | null>(null);
+  const [selectedLevel3, setSelectedLevel3] = useState<string | null>(null);
 
-  // ─── Cargar categorías del backend (máximo 10 para el home) ────────────────
+  const searchFilter = searchParams.get("buscar");
+  const catFromUrl = searchParams.get("cat");
+
+  // ─── Sincronizar ?cat de la URL con la selección de nivel 1 ────────────────
+  useEffect(() => {
+    if (catFromUrl && catFromUrl !== selectedLevel1) {
+      setSelectedLevel1(catFromUrl);
+      setSelectedLevel2(null);
+      setSelectedLevel3(null);
+    } else if (!catFromUrl && selectedLevel1 && searchParams.has("cat")) {
+      // URL limpia → limpiar selección
+      setSelectedLevel1(null);
+    }
+  }, [catFromUrl]);
+
+  // ─── Cargar TODAS las categorías del backend ──────────────────────────────
   useEffect(() => {
     setIsLoadingCategories(true);
     getCategoriasApi()
       .then((cats) => {
-        const withIcons = cats.slice(0, 10).map((c) => ({
+        const withIcons = cats.map((c) => ({
           ...c,
-          icon: categoryIcons[c.name.toLowerCase()] ?? "🏷️",
         }));
-        setCategories(withIcons);
+        setAllCategories(withIcons);
       })
-      .catch(() => {
-        setCategories([]);
-      })
+      .catch(() => setAllCategories([]))
       .finally(() => setIsLoadingCategories(false));
   }, []);
 
-  // ─── Cargar productos del backend ─────────────────────────────────────────
+  // ─── Derivar los 3 niveles de la jerarquía ─────────────────────────────────
+  const rootCategories = useMemo(
+    () => allCategories.filter((c) => c.id_padre === null),
+    [allCategories]
+  );
+  const level2Categories = useMemo(
+    () => (selectedLevel1 ? allCategories.filter((c) => c.id_padre === selectedLevel1) : []),
+    [allCategories, selectedLevel1]
+  );
+  const level3Categories = useMemo(
+    () => (selectedLevel2 ? allCategories.filter((c) => c.id_padre === selectedLevel2) : []),
+    [allCategories, selectedLevel2]
+  );
+
+  // ─── Cargar productos según la categoría seleccionada ──────────────────────
   useEffect(() => {
-    // Si tenemos un filtro de categoría numérico, cargar esa categoría
-    if (categoryFilter) {
-      const catId = Number(categoryFilter);
-      if (!isNaN(catId) && catId > 0) {
-        setIsLoadingProducts(true);
-        const filtros = {
-          q: searchFilter ?? undefined,
-          precio_min: priceRange[0] > 0 ? priceRange[0] : undefined,
-          precio_max: priceRange[1] < 2000 ? priceRange[1] : undefined,
-          calificacion_min: minRating > 0 ? minRating : undefined,
-          ordenar:
-            sortBy === "precio-asc" ? "precio_menor"
-            : sortBy === "precio-desc" ? "precio_mayor"
-            : sortBy === "rating" ? "mejor_calificados"
-            : sortBy === "nombre" ? "nombre_az"
-            : "mejor_calificados",
-        };
-        Promise.all([
-          getProductosPorCategoriaApi(catId, filtros).catch(() => []),
-          getServiciosPorCategoriaApi(catId, filtros).catch(() => []),
-        ])
-          .then(([prods, servs]) => setProducts([...prods, ...servs]))
-          .finally(() => setIsLoadingProducts(false));
-        return;
-      }
-    }
+    if (isLoadingCategories) return;
 
-    // Sin filtro: cargar todos los productos de TODAS las categorías
-    if (categories.length > 0) {
-      setIsLoadingProducts(true);
-      const promises = categories.map((cat) => {
-        const catId = Number(cat.id);
-        if (isNaN(catId)) return Promise.resolve([]);
-        return Promise.all([
-          getProductosPorCategoriaApi(catId).catch(() => []),
-          getServiciosPorCategoriaApi(catId).catch(() => []),
-        ]).then(([p, s]) => [...p, ...s]);
-      });
+    setIsLoadingProducts(true);
 
-      Promise.all(promises)
-        .then((results) => {
-          const allProducts = results.flat();
-          // Eliminar duplicados por ID y tipo
-          const unique = Array.from(new Map(allProducts.map((p) => [`${p.type}-${p.id}`, p])).values());
+    // Determinar qué categoría usar: la más específica seleccionada
+    const activeCatId = selectedLevel3 ?? selectedLevel2 ?? selectedLevel1;
+
+    if (activeCatId) {
+      const catId = Number(activeCatId);
+      Promise.all([
+        getProductosPorCategoriaApi(catId).catch(() => []),
+        getServiciosPorCategoriaApi(catId).catch(() => []),
+      ])
+        .then(([prods, servs]) => {
+          const all = [...prods, ...servs];
+          const unique = Array.from(new Map(all.map((p) => [`${p.type}-${p.id}`, p])).values());
           setProducts(unique);
         })
         .finally(() => setIsLoadingProducts(false));
-    } else if (!isLoadingCategories) {
-      // No hay categorías → no hay productos
-      setProducts([]);
-      setIsLoadingProducts(false);
+    } else {
+      // Sin categoría seleccionada: cargar todos los productos
+      getAllProductosApi()
+        .then((prods) => setProducts(prods))
+        .catch(() => setProducts([]))
+        .finally(() => setIsLoadingProducts(false));
     }
-  }, [categoryFilter, searchFilter, sortBy, priceRange, minRating, categories, isLoadingCategories]);
+  }, [selectedLevel1, selectedLevel2, selectedLevel3, isLoadingCategories]);
 
   // ─── Filtrado y ordenado local ────────────────────────────────────────────
   const filteredProducts = useMemo(() => {
     let result = [...products];
 
-    // Si hay búsqueda por texto y no se envió al backend
-    if (searchFilter && !categoryFilter) {
+    if (searchFilter) {
       const q = searchFilter.toLowerCase();
       result = result.filter(
         (p) =>
@@ -146,7 +132,6 @@ export function HomePage() {
       );
     }
 
-    // Filtros de precio y rating
     result = result.filter(
       (p) => p.price >= priceRange[0] && p.price <= priceRange[1]
     );
@@ -154,7 +139,6 @@ export function HomePage() {
       result = result.filter((p) => p.rating >= minRating);
     }
 
-    // Ordenar
     switch (sortBy) {
       case "precio-asc":
         result.sort((a, b) => a.price - b.price);
@@ -172,26 +156,32 @@ export function HomePage() {
         result.sort((a, b) => b.reviewCount - a.reviewCount);
     }
     return result;
-  }, [products, searchFilter, categoryFilter, sortBy, priceRange, minRating]);
+  }, [products, searchFilter, sortBy, priceRange, minRating]);
 
   const topRated = useMemo(
     () => [...products].sort((a, b) => b.rating - a.rating).slice(0, 4),
     [products]
   );
 
+  // ─── Nombre activo para el título ──────────────────────────────────────────
+  const activeCatName = useMemo(() => {
+    const id = selectedLevel3 ?? selectedLevel2 ?? selectedLevel1;
+    if (!id) return null;
+    return allCategories.find((c) => c.id === id)?.name ?? null;
+  }, [selectedLevel1, selectedLevel2, selectedLevel3, allCategories]);
+
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
       <Navbar />
 
       {/* Hero Banner */}
-      {!categoryFilter && !searchFilter && (
+      {!selectedLevel1 && !searchFilter && (
         <section className="relative w-full h-[320px] md:h-[400px] overflow-hidden">
           {bannerImages.map((banner, idx) => (
             <div
               key={idx}
-              className={`absolute inset-0 transition-opacity duration-700 ${
-                idx === currentBanner ? "opacity-100" : "opacity-0"
-              }`}
+              className={`absolute inset-0 transition-opacity duration-700 ${idx === currentBanner ? "opacity-100" : "opacity-0"
+                }`}
             >
               <img
                 src={banner.image}
@@ -210,13 +200,6 @@ export function HomePage() {
                   <p className="text-white/80 mt-3 max-w-md" style={{ fontSize: 18 }}>
                     {banner.subtitle}
                   </p>
-                  <Link
-                    to="/"
-                    className="inline-block mt-6 bg-amber-400 text-[#022C22] px-8 py-3 rounded-lg hover:bg-amber-300 transition-colors"
-                    style={{ fontSize: 16, fontWeight: 600 }}
-                  >
-                    Explorar Ofertas
-                  </Link>
                 </div>
               </div>
             </div>
@@ -238,64 +221,99 @@ export function HomePage() {
               <button
                 key={idx}
                 onClick={() => setCurrentBanner(idx)}
-                className={`w-3 h-3 rounded-full transition-colors ${
-                  idx === currentBanner ? "bg-amber-400" : "bg-white/50"
-                }`}
+                className={`w-3 h-3 rounded-full transition-colors ${idx === currentBanner ? "bg-amber-400" : "bg-white/50"
+                  }`}
               />
             ))}
           </div>
         </section>
       )}
 
-      {/* Categories — SOLO si hay categorías en la BD */}
-      {!categoryFilter && !searchFilter && (
-        <section className="max-w-7xl mx-auto px-4 py-8">
-          <h2 className="mb-6" style={{ fontSize: 22, fontWeight: 600 }}>
-            Buscar por Categoria
-          </h2>
-          {isLoadingCategories ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="animate-spin text-primary" size={32} />
-            </div>
-          ) : categories.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-muted-foreground" style={{ fontSize: 14 }}>
-                No hay categorias registradas en la base de datos
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-              {categories.map((cat) => (
-                <Link
-                  key={cat.id}
-                  to={`/?categoria=${cat.id}`}
-                  className="bg-white rounded-xl border border-border p-4 text-center hover:shadow-md hover:border-primary/30 transition-all group"
-                >
-                  <div style={{ fontSize: 32 }} className="mb-2">
-                    {cat.icon}
-                  </div>
-                  <p
-                    className="text-muted-foreground group-hover:text-primary transition-colors"
-                    style={{ fontSize: 13, fontWeight: 500 }}
-                  >
-                    {cat.name}
-                  </p>
-                </Link>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
+      {/* ═══════════ CATEGORÍAS JERÁRQUICAS (3 barras cascadeantes) ═══════════ */}
+      <section className="max-w-7xl mx-auto px-4 py-8 w-full">
+        <h2 className="mb-4" style={{ fontSize: 22, fontWeight: 600 }}>
+          Buscar por Categoría
+        </h2>
+
+        {isLoadingCategories ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="animate-spin text-primary" size={32} />
+          </div>
+        ) : rootCategories.length === 0 ? (
+          <div className="text-center py-8">
+            <p className="text-muted-foreground" style={{ fontSize: 14 }}>
+              No hay categorias registradas en la base de datos
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {/* ── Barra Nivel 1: Categorías Raíz ─────────────────────────────── */}
+            <CategoryBar
+              items={rootCategories}
+              selectedId={selectedLevel1}
+              onSelect={(id) => {
+                if (id === selectedLevel1) {
+                  // Deseleccionar todo
+                  setSelectedLevel1(null);
+                  setSelectedLevel2(null);
+                  setSelectedLevel3(null);
+                } else {
+                  setSelectedLevel1(id);
+                  setSelectedLevel2(null);
+                  setSelectedLevel3(null);
+                }
+              }}
+              label={null}
+            />
+
+            {/* ── Barra Nivel 2: Subcategorías ───────────────────────────────── */}
+            {selectedLevel1 && level2Categories.length > 0 && (
+              <CategoryBar
+                items={level2Categories}
+                selectedId={selectedLevel2}
+                onSelect={(id) => {
+                  if (id === selectedLevel2) {
+                    setSelectedLevel2(null);
+                    setSelectedLevel3(null);
+                  } else {
+                    setSelectedLevel2(id);
+                    setSelectedLevel3(null);
+                  }
+                }}
+                label={rootCategories.find((c) => c.id === selectedLevel1)?.name ?? ""}
+                onClear={() => { setSelectedLevel1(null); setSelectedLevel2(null); setSelectedLevel3(null); }}
+              />
+            )}
+
+            {/* ── Barra Nivel 3: Sub-subcategorías ───────────────────────────── */}
+            {selectedLevel2 && level3Categories.length > 0 && (
+              <CategoryBar
+                items={level3Categories}
+                selectedId={selectedLevel3}
+                onSelect={(id) => {
+                  if (id === selectedLevel3) {
+                    setSelectedLevel3(null);
+                  } else {
+                    setSelectedLevel3(id);
+                  }
+                }}
+                label={level2Categories.find((c) => c.id === selectedLevel2)?.name ?? ""}
+                onClear={() => { setSelectedLevel2(null); setSelectedLevel3(null); }}
+              />
+            )}
+          </div>
+        )}
+      </section>
 
       {/* Top rated — SOLO si hay productos en la BD */}
-      {!categoryFilter && !searchFilter && topRated.length > 0 && (
-        <section className="max-w-7xl mx-auto px-4 pb-8">
+      {!selectedLevel1 && !searchFilter && topRated.length > 0 && (
+        <section className="max-w-7xl mx-auto px-4 pb-8 w-full">
           <h2 className="mb-6" style={{ fontSize: 22, fontWeight: 600 }}>
             Mejor Calificados
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {topRated.map((product) => (
-              <ProductCard key={product.id} product={product} />
+              <ProductCard key={`${product.type}-${product.id}`} product={product} />
             ))}
           </div>
         </section>
@@ -306,11 +324,11 @@ export function HomePage() {
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
           <div>
             <h2 style={{ fontSize: 22, fontWeight: 600 }}>
-              {categoryFilter
-                ? categories.find((c) => c.id === categoryFilter)?.name || "Productos"
+              {activeCatName
+                ? activeCatName
                 : searchFilter
-                ? `Resultados para "${searchFilter}"`
-                : "Todos los Productos"}
+                  ? `Resultados para "${searchFilter}"`
+                  : "Todos los Productos"}
             </h2>
             <p className="text-muted-foreground" style={{ fontSize: 14 }}>
               {filteredProducts.length} producto{filteredProducts.length !== 1 ? "s" : ""} encontrado{filteredProducts.length !== 1 ? "s" : ""}
@@ -414,19 +432,107 @@ export function HomePage() {
         ) : filteredProducts.length === 0 ? (
           <div className="text-center py-20">
             <p className="text-muted-foreground" style={{ fontSize: 18 }}>
-              No hay productos registrados en la base de datos
+              No hay productos en esta categoría
             </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filteredProducts.map((product) => (
-              <ProductCard key={product.id} product={product} />
+              <ProductCard key={`${product.type}-${product.id}`} product={product} />
             ))}
           </div>
         )}
       </section>
 
       <Footer />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Componente auxiliar: Barra deslizante de categorías
+// ═══════════════════════════════════════════════════════════════════════════════
+function CategoryBar({
+  items,
+  selectedId,
+  onSelect,
+  label,
+  onClear,
+}: {
+  items: CatItem[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  label: string | null;
+  onClear?: () => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const scroll = (direction: "left" | "right") => {
+    if (!scrollRef.current) return;
+    const amount = 300;
+    scrollRef.current.scrollBy({
+      left: direction === "left" ? -amount : amount,
+      behavior: "smooth",
+    });
+  };
+
+  return (
+    <div className="relative">
+      {/* Label + clear button */}
+      {label && (
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-muted-foreground" style={{ fontSize: 13 }}>▸ {label}</span>
+          {onClear && (
+            <button
+              onClick={onClear}
+              className="text-red-500 hover:text-red-600 transition-colors"
+              style={{ fontSize: 12 }}
+              title="Limpiar selección"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        {/* Scroll left */}
+        <button
+          onClick={() => scroll("left")}
+          className="flex-shrink-0 p-1.5 rounded-full bg-white border border-border hover:bg-gray-100 transition-colors shadow-sm"
+        >
+          <ChevronLeft size={16} className="text-gray-600" />
+        </button>
+
+        {/* Scrollable container */}
+        <div
+          ref={scrollRef}
+          className="flex gap-2 overflow-x-auto scrollbar-hide"
+          style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+        >
+          {items.map((cat) => (
+            <button
+              key={cat.id}
+              onClick={() => onSelect(cat.id)}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border whitespace-nowrap transition-all flex-shrink-0 ${selectedId === cat.id
+                ? "bg-primary text-white border-primary shadow-md scale-[1.02]"
+                : "bg-white border-border text-gray-700 hover:border-primary/40 hover:shadow-sm"
+                }`}
+              style={{ fontSize: 13, fontWeight: 500 }}
+            >
+              {cat.name}
+            </button>
+          ))}
+        </div>
+
+        {/* Scroll right */}
+        <button
+          onClick={() => scroll("right")}
+          className="flex-shrink-0 p-1.5 rounded-full bg-white border border-border hover:bg-gray-100 transition-colors shadow-sm"
+        >
+          <ChevronRight size={16} className="text-gray-600" />
+        </button>
+      </div>
     </div>
   );
 }

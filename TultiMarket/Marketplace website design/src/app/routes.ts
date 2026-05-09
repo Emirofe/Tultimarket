@@ -13,7 +13,6 @@ import { SellerLayout } from "./pages/seller/seller-layout";
 import { SellerDashboardPage } from "./pages/seller/dashboard";
 import { SellerProductsPage } from "./pages/seller/products";
 import { SellerInventoryPage } from "./pages/seller/inventory";
-import { SellerBundlesPage } from "./pages/seller/bundles";
 import { SellerOrdersPage } from "./pages/seller/orders";
 import { SellerServicesPage } from "./pages/seller/services";
 import { SellerSalesPage } from "./pages/seller/sales";
@@ -50,7 +49,6 @@ export const router = createBrowserRouter([
           { index: true, Component: SellerDashboardPage },
           { path: "productos", Component: SellerProductsPage },
           { path: "inventario", Component: SellerInventoryPage },
-          { path: "paquetes", Component: SellerBundlesPage },
           { path: "pedidos", Component: SellerOrdersPage },
           { path: "ventas", Component: SellerSalesPage },
           { path: "servicios", Component: SellerServicesPage },

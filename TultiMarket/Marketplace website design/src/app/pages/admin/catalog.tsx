@@ -2,10 +2,10 @@ import { useState, useEffect } from "react";
 import { Search, Filter, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  getCatalogoProductosAdminApi,
-  getCatalogoServiciosAdminApi,
-  updateEstadoCatalogoProductoApi,
-  updateEstadoCatalogoServicioApi,
+  getAdminCatalogoProductosApi,
+  getAdminCatalogoServiciosApi,
+  updateAdminEstadoProductoApi,
+  updateAdminEstadoServicioApi,
 } from "../../api/api-client";
 
 interface CatalogoItem {
@@ -28,17 +28,17 @@ export function AdminCatalogPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    Promise.all([getCatalogoProductosAdminApi(), getCatalogoServiciosAdminApi()])
-      .then(([prodData, servData]) => {
+    Promise.all([getAdminCatalogoProductosApi(), getAdminCatalogoServiciosApi()])
+      .then(([prodItems, servItems]) => {
         if (cancelled) return;
-        const prods: CatalogoItem[] = prodData.productos.map((p) => ({
-          id: p.id, nombre: p.nombre, precio: p.precio,
-          precio_con_descuento: p.precio_con_descuento, negocio: p.negocio,
+        const prods: CatalogoItem[] = prodItems.map((p) => ({
+          id: p.id, nombre: p.nombre, precio: p.precio ?? p.precio_base ?? 0,
+          precio_con_descuento: p.precio_con_descuento ?? p.precio ?? 0, negocio: p.negocio,
           estado_catalogo: p.estado_catalogo, esta_activo: p.esta_activo, tipo: "producto",
         }));
-        const servs: CatalogoItem[] = servData.servicios.map((s) => ({
-          id: s.id, nombre: s.nombre, precio: s.precio_base,
-          precio_con_descuento: s.precio_con_descuento, negocio: s.negocio,
+        const servs: CatalogoItem[] = servItems.map((s) => ({
+          id: s.id, nombre: s.nombre, precio: s.precio_base ?? s.precio ?? 0,
+          precio_con_descuento: s.precio_con_descuento ?? s.precio_base ?? 0, negocio: s.negocio,
           estado_catalogo: s.estado_catalogo, esta_activo: s.esta_activo, tipo: "servicio",
         }));
         setItems([...prods, ...servs]);
@@ -51,8 +51,8 @@ export function AdminCatalogPage() {
   const handleStatusChange = async (item: CatalogoItem, newStatus: "Aprobado" | "Rechazado") => {
     const apiEstado = newStatus === "Aprobado" ? "APROBADO" as const : "RECHAZADO" as const;
     try {
-      if (item.tipo === "producto") await updateEstadoCatalogoProductoApi(item.id, apiEstado);
-      else await updateEstadoCatalogoServicioApi(item.id, apiEstado);
+      if (item.tipo === "producto") await updateAdminEstadoProductoApi(item.id, apiEstado);
+      else await updateAdminEstadoServicioApi(item.id, apiEstado);
       setItems((prev) => prev.map((p) =>
         p.id === item.id && p.tipo === item.tipo
           ? { ...p, estado_catalogo: newStatus, esta_activo: newStatus === "Aprobado" } : p

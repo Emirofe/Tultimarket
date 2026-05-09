@@ -53,7 +53,7 @@ export function ProductDetailPage() {
   const [reportMotivo, setReportMotivo] = useState("");
   const [reportDescripcion, setReportDescripcion] = useState("");
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
-  
+
   // States para Servicios
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedTime, setSelectedTime] = useState<string>("");
@@ -197,7 +197,7 @@ export function ProductDetailPage() {
   const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!product || isSubmittingReview) return;
-    
+
     if (reviewRating === 0) {
       toast.error("Selecciona una calificacion");
       return;
@@ -206,7 +206,7 @@ export function ProductDetailPage() {
       toast.error("El comentario debe tener al menos 10 caracteres");
       return;
     }
-    
+
     setIsSubmittingReview(true);
     try {
       await createReviewApi(
@@ -219,7 +219,7 @@ export function ProductDetailPage() {
       setShowReviewForm(false);
       setReviewRating(0);
       setReviewComment("");
-      
+
       // Recargar el producto para ver la reseña inmediatamente
       const numericId = Number(product.id);
       if (product.type === "servicio") {
@@ -269,9 +269,8 @@ export function ProductDetailPage() {
                     <button
                       key={idx}
                       onClick={() => setSelectedImage(idx)}
-                      className={`w-20 h-20 rounded-lg overflow-hidden border-2 transition-colors ${
-                        idx === selectedImage ? "border-primary" : "border-border"
-                      }`}
+                      className={`w-20 h-20 rounded-lg overflow-hidden border-2 transition-colors ${idx === selectedImage ? "border-primary" : "border-border"
+                        }`}
                     >
                       <img src={img} alt="" className="w-full h-full object-cover" />
                     </button>
@@ -360,8 +359,8 @@ export function ProductDetailPage() {
                       <label className="block mb-1.5 flex items-center gap-2" style={{ fontSize: 13, fontWeight: 500 }}>
                         <Calendar size={14} className="text-primary" /> Fecha
                       </label>
-                      <input 
-                        type="date" 
+                      <input
+                        type="date"
                         min={new Date().toISOString().split("T")[0]}
                         value={selectedDate}
                         onChange={(e) => setSelectedDate(e.target.value)}
@@ -372,7 +371,7 @@ export function ProductDetailPage() {
                       <label className="block mb-1.5 flex items-center gap-2" style={{ fontSize: 13, fontWeight: 500 }}>
                         <Clock size={14} className="text-primary" /> Horario
                       </label>
-                      <select 
+                      <select
                         value={selectedTime}
                         onChange={(e) => setSelectedTime(e.target.value)}
                         className="w-full px-3 py-2 rounded-lg border border-border bg-white outline-none focus:border-primary"
@@ -423,11 +422,10 @@ export function ProductDetailPage() {
                 </button>
                 <button
                   onClick={handleToggleWishlist}
-                  className={`p-3.5 rounded-xl border-2 transition-colors ${
-                    inWishlist
+                  className={`p-3.5 rounded-xl border-2 transition-colors ${inWishlist
                       ? "border-red-500 text-red-500 bg-red-50"
                       : "border-border text-muted-foreground hover:border-red-300 hover:text-red-500"
-                  }`}
+                    }`}
                 >
                   <Heart size={22} className={inWishlist ? "fill-current" : ""} />
                 </button>
@@ -523,13 +521,6 @@ export function ProductDetailPage() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <div className="bg-gray-50 rounded-xl p-4 flex items-center gap-3">
-                    <Package size={20} className="text-primary shrink-0" />
-                    <div>
-                      <p style={{ fontSize: 14, fontWeight: 500 }}>Envio estimado: 3-5 dias habiles</p>
-                      <p className="text-muted-foreground" style={{ fontSize: 13 }}>Contexto: Fiestas</p>
-                    </div>
-                  </div>
                   <div className="bg-white rounded-xl border border-border p-4 flex items-start gap-3">
                     <MapPin size={18} className="text-primary shrink-0 mt-0.5" />
                     <div>
@@ -552,11 +543,10 @@ export function ProductDetailPage() {
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-6 py-4 capitalize transition-colors ${
-                  activeTab === tab
+                className={`px-6 py-4 capitalize transition-colors ${activeTab === tab
                     ? "border-b-2 border-primary text-primary"
                     : "text-muted-foreground hover:text-foreground"
-                }`}
+                  }`}
                 style={{ fontSize: 15, fontWeight: 500 }}
               >
                 {tab === "resenas" ? `Resenas (${product.reviews.length})` : tab === "vendedor" ? "Info del Vendedor" : "Descripcion"}
@@ -595,10 +585,10 @@ export function ProductDetailPage() {
                       style={{ fontSize: 14 }}
                     />
                     <div className="flex gap-2 mt-3">
-                      <button 
-                        type="submit" 
+                      <button
+                        type="submit"
                         disabled={isSubmittingReview}
-                        className="px-4 py-2 bg-primary text-white rounded-lg flex items-center gap-2 disabled:opacity-50" 
+                        className="px-4 py-2 bg-primary text-white rounded-lg flex items-center gap-2 disabled:opacity-50"
                         style={{ fontSize: 14 }}
                       >
                         {isSubmittingReview && <Loader2 size={14} className="animate-spin" />}

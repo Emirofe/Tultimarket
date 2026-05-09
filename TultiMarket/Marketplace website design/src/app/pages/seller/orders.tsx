@@ -135,21 +135,38 @@ export function SellerOrdersPage() {
                     Email: {order.buyerEmail}
                   </p>
                 )}
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground" style={{ fontSize: 14 }}>Actualizar estado:</span>
-                  <select
-                    value={order.status}
-                    onChange={(e) => updateStatus(order.id, e.target.value)}
-                    className="px-3 py-2 border border-border rounded-lg bg-white"
-                    style={{ fontSize: 14 }}
-                  >
-                    <option value="PENDIENTE">Pendiente</option>
-                    <option value="EN PREPARACION">En preparación</option>
-                    <option value="ENVIADO">Enviado</option>
-                    <option value="ENTREGADO">Entregado</option>
-                    <option value="CANCELADO">Cancelado</option>
-                  </select>
-                </div>
+                {(() => {
+                  const currentStatus = order.status.toUpperCase();
+                  const validTransitions: Record<string, string[]> = {
+                    "PENDIENTE": ["PENDIENTE", "EN PREPARACION", "CANCELADO"],
+                    "EN PREPARACION": ["EN PREPARACION", "ENVIADO", "CANCELADO"],
+                    "ENVIADO": ["ENVIADO", "ENTREGADO"],
+                    "ENTREGADO": ["ENTREGADO"],
+                    "CANCELADO": ["CANCELADO"],
+                  };
+                  const options = validTransitions[currentStatus] || [currentStatus];
+                  const isTerminal = options.length <= 1;
+
+                  return isTerminal ? (
+                    <p className="text-muted-foreground" style={{ fontSize: 14 }}>
+                      Estado final: <span className="font-semibold">{currentStatus}</span>
+                    </p>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground" style={{ fontSize: 14 }}>Actualizar estado:</span>
+                      <select
+                        value={order.status}
+                        onChange={(e) => updateStatus(order.id, e.target.value)}
+                        className="px-3 py-2 border border-border rounded-lg bg-white"
+                        style={{ fontSize: 14 }}
+                      >
+                        {options.map((st) => (
+                          <option key={st} value={st}>{st}</option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>

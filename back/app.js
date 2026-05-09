@@ -18,6 +18,7 @@ const createCompradorReportesRouter = require("./Comprador/reportes");
 const createUsuarioWishlistRouter = require("./Usuario/wishlist");
 const createVendedorBusinessRouter = require("./Vendedor/Negocio");
 const createVendedorDescuentosRouter = require("./Vendedor/Descuentos");
+const createIARouter = require("./IA/routes");
 
 
 const app = express();
@@ -148,16 +149,12 @@ app.use(
 );
 
 app.use(
-  createVendedorRouter({
-    pool,
-  })
+  createIARouter()
 );
 
 app.use(
   createVendedorRouter({
     pool,
-    obtenerProductos,
-    obtenerCategorias,
   })
 );
 

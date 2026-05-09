@@ -65,24 +65,6 @@ function createVendedorRouter({ pool }) {
     }
   });
 
-  // Verifica si una categoria con el mismo nombre y tipo ya existe.
-  router.get("/api/vendedor/categorias/check", async (req, res) => {
-    try {
-      const { nombre, tipo } = req.query;
-      if (!nombre || !tipo) {
-        return res.status(400).json({ error: "nombre y tipo son obligatorios" });
-      }
-      const result = await pool.query(
-        "SELECT id FROM categorias WHERE nombre_categoria = $1 AND tipo = $2",
-        [String(nombre).trim(), String(tipo).trim().toLowerCase()]
-      );
-      return res.json({ exists: result.rows.length > 0 });
-    } catch (error) {
-      console.error(error);
-      return res.status(500).json({ error: "Error al verificar categoria" });
-    }
-  });
-
   // Lista categorias y permite filtrar por tipo compatible.
   router.get("/api/vendedor/categorias", async (req, res) => {
     try {
@@ -141,13 +123,7 @@ function createVendedorRouter({ pool }) {
                   WHERE pi.id_producto = p.id
                   ORDER BY pi.es_principal DESC, pi.orden_visual ASC, pi.id ASC
                   LIMIT 1
-                ) AS imagen_principal,
-                (
-                  SELECT pc.id_categoria
-                  FROM producto_categoria pc
-                  WHERE pc.id_producto = p.id
-                  LIMIT 1
-                ) AS id_categoria
+                ) AS imagen_principal
          FROM productos p
          WHERE id_negocio = $1
          ORDER BY p.id DESC`,
@@ -210,11 +186,6 @@ function createVendedorRouter({ pool }) {
         }
       }
 
-      // Generar SKU automático si no se proporcionó
-      const skuFinal = sku
-        ? String(sku).trim()
-        : `SKU-${idNegocio}-${Date.now().toString(36).toUpperCase()}`;
-
       const result = await client.query(
         `INSERT INTO productos (nombre, descripcion, precio, id_negocio, sku, stock_total, id_descuento)
          VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -224,7 +195,7 @@ function createVendedorRouter({ pool }) {
           descripcion ? String(descripcion).trim() : null,
           precioNum,
           idNegocio,
-          skuFinal,
+          (sku && String(sku).trim()) ? String(sku).trim() : `AUTO-${Date.now()}-${Math.floor(Math.random()*10000)}`,
           stockTotalNum,
           idDescuentoNum,
         ]
@@ -249,15 +220,6 @@ function createVendedorRouter({ pool }) {
         [producto.id]
       );
 
-      // Crear lote de inventario automáticamente si el producto tiene stock
-      if (stockTotalNum > 0) {
-        await client.query(
-          `INSERT INTO lotes_inventario (id_producto, stock_disponible, fecha_recibido, fecha_caducidad)
-           VALUES ($1, $2, CURRENT_DATE, CURRENT_DATE + INTERVAL '2 years')`,
-          [producto.id, stockTotalNum]
-        );
-      }
-
       await client.query("COMMIT");
 
       return res.status(201).json({
@@ -267,8 +229,8 @@ function createVendedorRouter({ pool }) {
     } catch (err) {
       await client.query("ROLLBACK");
       if (err.code === "23505") {
-        const esSku = err.constraint && err.constraint.toLowerCase().includes('sku');
-        return res.status(409).json({ error: esSku ? "El SKU ya existe. Usa uno diferente." : "Conflicto: un registro duplicado impide guardar." });
+        const detail = err.constraint?.includes("sku") ? "SKU duplicado" : `Valor duplicado: ${err.detail || err.message}`;
+        return res.status(409).json({ error: detail });
       }
 
       console.error(err);
@@ -515,13 +477,7 @@ function createVendedorRouter({ pool }) {
                   WHERE si.id_servicio = s.id
                   ORDER BY si.es_principal DESC, si.orden_visual ASC, si.id ASC
                   LIMIT 1
-                ) AS imagen_principal,
-                (
-                  SELECT sc.id_categoria
-                  FROM servicio_categoria sc
-                  WHERE sc.id_servicio = s.id
-                  LIMIT 1
-                ) AS id_categoria
+                ) AS imagen_principal
          FROM servicios s
          WHERE id_negocio = $1
          ORDER BY s.id DESC`,
