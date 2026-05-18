@@ -3,6 +3,66 @@ const express = require("express");
 function createVendedorDescuentosRouter({ pool }) {
   const router = express.Router();
 
+  async function requireVendedorAuth(req, res, next) {
+    const usuarioId = Number(req.session?.usuario_id || 0);
+    const rol = String(req.session?.rol || "").toLowerCase();
+
+    if (!Number.isInteger(usuarioId) || usuarioId <= 0) {
+      return res.status(401).json({ error: "Debes iniciar sesion" });
+    }
+
+    if (rol !== "vendedor") {
+      return res.status(403).json({ error: "No autorizado para esta accion" });
+    }
+
+    try {
+      const result = await pool.query(
+        `SELECT u.id
+         FROM usuarios u
+         INNER JOIN roles r ON r.id = u.id_rol
+         WHERE u.id = $1
+           AND u.activo = TRUE
+           AND u.fecha_eliminacion IS NULL
+           AND LOWER(r.nombre_rol) = 'vendedor'
+         LIMIT 1`,
+        [usuarioId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(401).json({ error: "Sesion invalida o usuario inactivo" });
+      }
+
+      req.vendedorId = usuarioId;
+      return next();
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: "Error al validar sesion" });
+    }
+  }
+
+  async function obtenerNegocioVendedor(usuarioId) {
+    const result = await pool.query(
+      `SELECT id
+       FROM negocios
+       WHERE id_usuario = $1
+       ORDER BY fecha_creacion DESC, id DESC
+       LIMIT 1`,
+      [usuarioId]
+    );
+
+    return result.rows[0]?.id ?? null;
+  }
+
+  async function requireNegocioVendedor(req, res) {
+    const negocioId = await obtenerNegocioVendedor(Number(req.vendedorId || 0));
+    if (!negocioId) {
+      res.status(404).json({ error: "Negocio no encontrado para el vendedor" });
+      return null;
+    }
+
+    return negocioId;
+  }
+
   function obtenerFechaEstado(fechaInicio, fechaFin) {
     const ahora = Date.now();
     const inicio = fechaInicio ? new Date(fechaInicio).getTime() : NaN;
@@ -68,7 +128,7 @@ function createVendedorDescuentosRouter({ pool }) {
    * Valida: producto existente, porcentaje 0-100, fechas validas y cupon unico.
    * Resultado: crea registro en descuentos y lo asigna a productos.id_descuento.
    */
-  router.post("/api/vendedor/productos/:id/descuentos", async (req, res) => {
+  router.post("/api/vendedor/productos/:id/descuentos", requireVendedorAuth, async (req, res) => {
     try {
       const idProducto = Number(req.params.id);
       const { codigo_cupon, porcentaje_descuento, fecha_inicio, fecha_fin } = req.body;
@@ -78,8 +138,8 @@ function createVendedorDescuentosRouter({ pool }) {
       }
 
       const porcentaje = Number(porcentaje_descuento);
-      if (!Number.isFinite(porcentaje) || porcentaje < 0 || porcentaje > 100) {
-        return res.status(400).json({ error: "porcentaje_descuento debe ser un numero entre 0 y 100" });
+      if (!Number.isFinite(porcentaje) || porcentaje <= 0 || porcentaje > 100) {
+        return res.status(400).json({ error: "porcentaje_descuento debe ser un numero entre 1 y 100" });
       }
 
       const fechaInicio = parseFecha(fecha_inicio);
@@ -92,11 +152,15 @@ function createVendedorDescuentosRouter({ pool }) {
         return res.status(400).json({ error: "fecha_inicio debe ser anterior a fecha_fin" });
       }
 
+      const negocioVendedor = await requireNegocioVendedor(req, res);
+      if (!negocioVendedor) return;
+
       const producto = await pool.query(
         `SELECT id, nombre, precio
          FROM productos
-         WHERE id = $1`,
-        [idProducto]
+         WHERE id = $1
+           AND id_negocio = $2`,
+        [idProducto, negocioVendedor]
       );
 
       if (producto.rows.length === 0) {
@@ -156,7 +220,7 @@ function createVendedorDescuentosRouter({ pool }) {
    * Valida: servicio existente, porcentaje 0-100, fechas validas y cupon unico.
    * Resultado: crea registro en descuentos y lo asigna a servicios.id_descuento.
    */
-  router.post("/api/vendedor/servicios/:id/descuentos", async (req, res) => {
+  router.post("/api/vendedor/servicios/:id/descuentos", requireVendedorAuth, async (req, res) => {
     try {
       const idServicio = Number(req.params.id);
       const { codigo_cupon, porcentaje_descuento, fecha_inicio, fecha_fin } = req.body;
@@ -166,8 +230,8 @@ function createVendedorDescuentosRouter({ pool }) {
       }
 
       const porcentaje = Number(porcentaje_descuento);
-      if (!Number.isFinite(porcentaje) || porcentaje < 0 || porcentaje > 100) {
-        return res.status(400).json({ error: "porcentaje_descuento debe ser un numero entre 0 y 100" });
+      if (!Number.isFinite(porcentaje) || porcentaje <= 0 || porcentaje > 100) {
+        return res.status(400).json({ error: "porcentaje_descuento debe ser un numero entre 1 y 100" });
       }
 
       const fechaInicio = parseFecha(fecha_inicio);
@@ -180,11 +244,15 @@ function createVendedorDescuentosRouter({ pool }) {
         return res.status(400).json({ error: "fecha_inicio debe ser anterior a fecha_fin" });
       }
 
+      const negocioVendedor = await requireNegocioVendedor(req, res);
+      if (!negocioVendedor) return;
+
       const servicio = await pool.query(
         `SELECT id, nombre, precio_base
          FROM servicios
-         WHERE id = $1`,
-        [idServicio]
+         WHERE id = $1
+           AND id_negocio = $2`,
+        [idServicio, negocioVendedor]
       );
 
       if (servicio.rows.length === 0) {
@@ -244,7 +312,7 @@ function createVendedorDescuentosRouter({ pool }) {
    * Valida: producto existente y relacion producto -> id_descuento.
    * Nota: campos omitidos conservan el valor actual del descuento.
    */
-  router.put("/api/vendedor/productos/:id/descuentos/:id_descuento", async (req, res) => {
+  router.put("/api/vendedor/productos/:id/descuentos/:id_descuento", requireVendedorAuth, async (req, res) => {
     try {
       const idProducto = Number(req.params.id);
       const idDescuento = Number(req.params.id_descuento);
@@ -258,11 +326,15 @@ function createVendedorDescuentosRouter({ pool }) {
         return res.status(400).json({ error: "ID de descuento invalido" });
       }
 
+      const negocioVendedor = await requireNegocioVendedor(req, res);
+      if (!negocioVendedor) return;
+
       const producto = await pool.query(
         `SELECT id, id_descuento
          FROM productos
-         WHERE id = $1`,
-        [idProducto]
+         WHERE id = $1
+           AND id_negocio = $2`,
+        [idProducto, negocioVendedor]
       );
 
       if (producto.rows.length === 0) {
@@ -287,8 +359,8 @@ function createVendedorDescuentosRouter({ pool }) {
 
       const nuevoPorcentaje =
         porcentaje_descuento === undefined ? Number(descuentoActual.porcentaje_descuento) : Number(porcentaje_descuento);
-      if (!Number.isFinite(nuevoPorcentaje) || nuevoPorcentaje < 0 || nuevoPorcentaje > 100) {
-        return res.status(400).json({ error: "porcentaje_descuento debe ser un numero entre 0 y 100" });
+      if (!Number.isFinite(nuevoPorcentaje) || nuevoPorcentaje <= 0 || nuevoPorcentaje > 100) {
+        return res.status(400).json({ error: "porcentaje_descuento debe ser un numero entre 1 y 100" });
       }
 
       const nuevaFechaInicio = fecha_inicio === undefined ? new Date(descuentoActual.fecha_inicio) : parseFecha(fecha_inicio);
@@ -339,7 +411,7 @@ function createVendedorDescuentosRouter({ pool }) {
    * Valida: servicio existente y relacion servicio -> id_descuento.
    * Nota: campos omitidos conservan el valor actual del descuento.
    */
-  router.put("/api/vendedor/servicios/:id/descuentos/:id_descuento", async (req, res) => {
+  router.put("/api/vendedor/servicios/:id/descuentos/:id_descuento", requireVendedorAuth, async (req, res) => {
     try {
       const idServicio = Number(req.params.id);
       const idDescuento = Number(req.params.id_descuento);
@@ -353,11 +425,15 @@ function createVendedorDescuentosRouter({ pool }) {
         return res.status(400).json({ error: "ID de descuento invalido" });
       }
 
+      const negocioVendedor = await requireNegocioVendedor(req, res);
+      if (!negocioVendedor) return;
+
       const servicio = await pool.query(
         `SELECT id, id_descuento
          FROM servicios
-         WHERE id = $1`,
-        [idServicio]
+         WHERE id = $1
+           AND id_negocio = $2`,
+        [idServicio, negocioVendedor]
       );
 
       if (servicio.rows.length === 0) {
@@ -382,8 +458,8 @@ function createVendedorDescuentosRouter({ pool }) {
 
       const nuevoPorcentaje =
         porcentaje_descuento === undefined ? Number(descuentoActual.porcentaje_descuento) : Number(porcentaje_descuento);
-      if (!Number.isFinite(nuevoPorcentaje) || nuevoPorcentaje < 0 || nuevoPorcentaje > 100) {
-        return res.status(400).json({ error: "porcentaje_descuento debe ser un numero entre 0 y 100" });
+      if (!Number.isFinite(nuevoPorcentaje) || nuevoPorcentaje <= 0 || nuevoPorcentaje > 100) {
+        return res.status(400).json({ error: "porcentaje_descuento debe ser un numero entre 1 y 100" });
       }
 
       const nuevaFechaInicio = fecha_inicio === undefined ? new Date(descuentoActual.fecha_inicio) : parseFecha(fecha_inicio);
@@ -433,7 +509,7 @@ function createVendedorDescuentosRouter({ pool }) {
    * Valida: producto existente y que tenga asignado ese id_descuento.
    * Resultado: deja productos.id_descuento en NULL.
    */
-  router.delete("/api/vendedor/productos/:id/descuentos/:id_descuento", async (req, res) => {
+  router.delete("/api/vendedor/productos/:id/descuentos/:id_descuento", requireVendedorAuth, async (req, res) => {
     try {
       const idProducto = Number(req.params.id);
       const idDescuento = Number(req.params.id_descuento);
@@ -446,11 +522,15 @@ function createVendedorDescuentosRouter({ pool }) {
         return res.status(400).json({ error: "ID de descuento invalido" });
       }
 
+      const negocioVendedor = await requireNegocioVendedor(req, res);
+      if (!negocioVendedor) return;
+
       const producto = await pool.query(
         `SELECT id, id_descuento
          FROM productos
-         WHERE id = $1`,
-        [idProducto]
+         WHERE id = $1
+           AND id_negocio = $2`,
+        [idProducto, negocioVendedor]
       );
 
       if (producto.rows.length === 0) {
@@ -485,7 +565,7 @@ function createVendedorDescuentosRouter({ pool }) {
    * Valida: servicio existente y que tenga asignado ese id_descuento.
    * Resultado: deja servicios.id_descuento en NULL.
    */
-  router.delete("/api/vendedor/servicios/:id/descuentos/:id_descuento", async (req, res) => {
+  router.delete("/api/vendedor/servicios/:id/descuentos/:id_descuento", requireVendedorAuth, async (req, res) => {
     try {
       const idServicio = Number(req.params.id);
       const idDescuento = Number(req.params.id_descuento);
@@ -498,11 +578,15 @@ function createVendedorDescuentosRouter({ pool }) {
         return res.status(400).json({ error: "ID de descuento invalido" });
       }
 
+      const negocioVendedor = await requireNegocioVendedor(req, res);
+      if (!negocioVendedor) return;
+
       const servicio = await pool.query(
         `SELECT id, id_descuento
          FROM servicios
-         WHERE id = $1`,
-        [idServicio]
+         WHERE id = $1
+           AND id_negocio = $2`,
+        [idServicio, negocioVendedor]
       );
 
       if (servicio.rows.length === 0) {

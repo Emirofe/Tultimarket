@@ -159,7 +159,6 @@ function createVendedorBusinessRouter({ pool }) {
     const {
       nombre_comercial,
       rfc_tax_id,
-      logo_url,
       calle,
       ciudad,
       estado,
@@ -180,9 +179,10 @@ function createVendedorBusinessRouter({ pool }) {
     const rfcFinal = rfc_tax_id === undefined || rfc_tax_id === null || String(rfc_tax_id).trim() === ""
       ? null
       : String(rfc_tax_id).trim();
-    const logoUrlFinal = logo_url === undefined || logo_url === null || String(logo_url).trim() === ""
+    const logoUrlFueEnviado = Object.prototype.hasOwnProperty.call(req.body || {}, "logo_url");
+    const logoUrlFinal = !logoUrlFueEnviado || req.body.logo_url === null || String(req.body.logo_url).trim() === ""
       ? null
-      : String(logo_url).trim();
+      : String(req.body.logo_url).trim();
 
     if (!nombreComercial || !calleFinal || !ciudadFinal || !estadoFinal || !codigoPostalFinal || !paisFinal) {
       return res.status(400).json({ status: "error", mensaje: "Faltan campos obligatorios del negocio o direccion" });
@@ -262,7 +262,6 @@ function createVendedorBusinessRouter({ pool }) {
     const {
       nombre_comercial,
       rfc_tax_id,
-      logo_url,
       calle,
       ciudad,
       estado,
@@ -283,9 +282,10 @@ function createVendedorBusinessRouter({ pool }) {
     const rfcFinal = rfc_tax_id === undefined || rfc_tax_id === null || String(rfc_tax_id).trim() === ""
       ? null
       : String(rfc_tax_id).trim();
-    const logoUrlFinal = logo_url === undefined || logo_url === null || String(logo_url).trim() === ""
+    const logoUrlFueEnviado = Object.prototype.hasOwnProperty.call(req.body || {}, "logo_url");
+    const logoUrlFinal = !logoUrlFueEnviado || req.body.logo_url === null || String(req.body.logo_url).trim() === ""
       ? null
-      : String(logo_url).trim();
+      : String(req.body.logo_url).trim();
 
     if (!nombreComercial || !calleFinal || !ciudadFinal || !estadoFinal || !codigoPostalFinal || !paisFinal) {
       return res.status(400).json({ status: "error", mensaje: "Faltan campos obligatorios del negocio o direccion" });
@@ -320,10 +320,10 @@ function createVendedorBusinessRouter({ pool }) {
         `UPDATE negocios
          SET nombre_comercial = $1,
              rfc_tax_id = $2,
-             logo_url = $3
-         WHERE id = $4
+             logo_url = CASE WHEN $3 THEN $4 ELSE logo_url END
+         WHERE id = $5
          RETURNING id, id_usuario, nombre_comercial, rfc_tax_id, id_direccion, logo_url, fecha_creacion`,
-        [nombreComercial, rfcFinal, logoUrlFinal, idNegocio]
+        [nombreComercial, rfcFinal, logoUrlFueEnviado, logoUrlFinal, idNegocio]
       );
 
       const direccion = await client.query(

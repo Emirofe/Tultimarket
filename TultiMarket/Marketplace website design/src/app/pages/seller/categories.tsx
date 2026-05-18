@@ -62,7 +62,7 @@ export function SellerCategoriesPage() {
 
       await createCategoriaVendedorApi(data);
 
-      setSuccess(`Categoria "${formData.nombre_categoria.trim()}" creada exitosamente`);
+      setSuccess(`Categoría "${formData.nombre_categoria.trim()}" creada exitosamente`);
       resetForm();
       setTimeout(() => setSuccess(null), 5000);
     } catch (err: any) {
@@ -86,9 +86,9 @@ export function SellerCategoriesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 style={{ fontSize: 24, fontWeight: 600 }}>Sugerir Categorias</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 600 }}>Crear Categorias</h1>
           <p className="text-muted-foreground" style={{ fontSize: 14 }}>
-            Propone nuevas categorias para tus productos o servicios.
+            Crea categorias nuevas para organizar tus productos o servicios.
           </p>
         </div>
         {!showForm && (
@@ -151,7 +151,7 @@ export function SellerCategoriesPage() {
 
           <div>
             <label className="block mb-1.5" style={{ fontSize: 14, fontWeight: 500 }}>
-              Descripcion (opcional)
+              Descripción (opcional)
             </label>
             <textarea
               value={formData.descripcion}
@@ -168,7 +168,7 @@ export function SellerCategoriesPage() {
 
           <div>
             <label className="block mb-1.5" style={{ fontSize: 14, fontWeight: 500 }}>
-              ID Categoria Padre (opcional)
+              ID Categoría Padre (opcional)
             </label>
             <input
               type="number"
@@ -204,16 +204,16 @@ export function SellerCategoriesPage() {
       ) : (
         <div className="bg-white rounded-2xl border border-border p-12 text-center">
           <Tag size={48} className="mx-auto text-muted-foreground/30 mb-4" />
-          <h3 className="mb-2" style={{ fontSize: 18, fontWeight: 600 }}>Sugiere nuevas categorias</h3>
+          <h3 className="mb-2" style={{ fontSize: 18, fontWeight: 600 }}>Crea nuevas categorias</h3>
           <p className="text-muted-foreground mb-4" style={{ fontSize: 14 }}>
-            Si no encuentras la categoria adecuada para tus productos o servicios, puedes sugerir una nueva.
+            Si no encuentras la categoria adecuada para tus productos o servicios, puedes crear una nueva.
           </p>
           <button
             onClick={() => setShowForm(true)}
             className="inline-flex items-center gap-2 bg-primary text-white px-6 py-2.5 rounded-xl hover:bg-primary/90 transition-colors"
             style={{ fontSize: 14, fontWeight: 600 }}
           >
-            <Plus size={16} /> Sugerir Categoria
+            <Plus size={16} /> Crear Categoria
           </button>
         </div>
       )}

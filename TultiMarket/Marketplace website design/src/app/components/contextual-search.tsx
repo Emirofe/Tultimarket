@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Search, Loader, Brain } from "lucide-react";
-import { products } from "../data/mock-data";
+import { type Product } from "../data/mock-data";
 
 interface ContextAnalysis {
   eventType: string;
@@ -10,13 +10,13 @@ interface ContextAnalysis {
   budget: { min: number; max: number } | null;
 }
 
-interface RecommendationResponse {
-  analysis: ContextAnalysis;
-  recommendations: typeof products;
-  explanation: string;
-}
-
-export function ContextualSearch({ onResultsFound }: { onResultsFound: (results: typeof products, analysis: ContextAnalysis) => void }) {
+export function ContextualSearch({
+  catalog,
+  onResultsFound,
+}: {
+  catalog: Product[];
+  onResultsFound: (results: Product[], analysis: ContextAnalysis) => void;
+}) {
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -151,8 +151,8 @@ export function ContextualSearch({ onResultsFound }: { onResultsFound: (results:
   };
 
   // Simular búsqueda en backend con análisis mejorado
-  const getRecommendations = (analysis: ContextAnalysis): typeof products => {
-    let results = [...products];
+  const getRecommendations = (analysis: ContextAnalysis): Product[] => {
+    let results = [...catalog];
 
     console.log("Analizando contexto:", analysis);
     console.log("Categorías relevantes:", analysis.relevantCategories);
@@ -199,7 +199,7 @@ export function ContextualSearch({ onResultsFound }: { onResultsFound: (results:
 
     // Si no hay resultados en categorías, retornar los más relevantes de todas formas
     if (results.length === 0) {
-      results = [...products].sort((a, b) => b.rating - a.rating);
+      results = [...catalog].sort((a, b) => b.rating - a.rating);
     }
 
     return results.slice(0, 12);

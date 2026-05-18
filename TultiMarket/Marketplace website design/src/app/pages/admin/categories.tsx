@@ -150,9 +150,9 @@ export function AdminCategoriesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 style={{ fontSize: 24, fontWeight: 600 }}>Gestion de Categorias</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 600 }}>Gestión de Categorías</h1>
           <p className="text-muted-foreground" style={{ fontSize: 14 }}>
-            Administra las categorias de productos y servicios del marketplace.
+            Administra las categorías de productos y servicios del marketplace.
           </p>
         </div>
         <button
@@ -160,7 +160,7 @@ export function AdminCategoriesPage() {
           className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl hover:bg-primary/90 transition-colors"
           style={{ fontSize: 14, fontWeight: 600 }}
         >
-          <Plus size={16} /> Nueva Categoria
+          <Plus size={16} /> Nueva Categoría
         </button>
       </div>
 
@@ -176,7 +176,7 @@ export function AdminCategoriesPage() {
       {showForm && (
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-border p-6 space-y-4">
           <h3 style={{ fontSize: 18, fontWeight: 600 }}>
-            {editingCategoria ? "Editar Categoria" : "Nueva Categoria"}
+            {editingCategoria ? "Editar Categoría" : "Nueva Categoría"}
           </h3>
 
           <div>

@@ -1,11 +1,11 @@
-import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useEffect, useState } from "react";
 import { Navbar } from "../components/layout/navbar";
 import { Footer } from "../components/layout/footer";
 import { ContextualSearch } from "../components/contextual-search";
 import { ProductCard } from "../components/product-card";
 import { SlidersHorizontal, X } from "lucide-react";
-import { products } from "../data/mock-data";
+import { type Product } from "../data/mock-data";
+import { getAllProductosApi, getServiciosGlobalApi } from "../api/api-client";
 
 interface ContextAnalysis {
   eventType: string;
@@ -15,16 +15,26 @@ interface ContextAnalysis {
   budget: { min: number; max: number } | null;
 }
 
+const DEFAULT_PRICE_RANGE: [number, number] = [0, 100000];
+
 export function SearchPage() {
-  const [searchResults, setSearchResults] = useState<typeof products>([]);
+  const [catalogItems, setCatalogItems] = useState<Product[]>([]);
+  const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [contextAnalysis, setContextAnalysis] = useState<ContextAnalysis | null>(null);
   const [sortBy, setSortBy] = useState("relevancia");
-  const [priceRange, setPriceRange] = useState<[number, number]>([0, 2000]);
+  const [priceRange, setPriceRange] = useState<[number, number]>(DEFAULT_PRICE_RANGE);
   const [minRating, setMinRating] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
-  const navigate = useNavigate();
+  useEffect(() => {
+    Promise.all([
+      getAllProductosApi().catch(() => []),
+      getServiciosGlobalApi().catch(() => []),
+    ])
+      .then(([prods, servs]) => setCatalogItems([...prods, ...servs]))
+      .catch(() => setCatalogItems([]));
+  }, []);
 
-  const handleResultsFound = (results: typeof products, analysis: ContextAnalysis) => {
+  const handleResultsFound = (results: Product[], analysis: ContextAnalysis) => {
     setSearchResults(results);
     setContextAnalysis(analysis);
     setShowFilters(false);
@@ -57,7 +67,7 @@ export function SearchPage() {
       <Navbar />
 
       {/* Buscador Contextual */}
-      <ContextualSearch onResultsFound={handleResultsFound} />
+      <ContextualSearch catalog={catalogItems} onResultsFound={handleResultsFound} />
 
       {/* Resultados */}
       {searchResults.length > 0 && contextAnalysis && (
@@ -73,7 +83,7 @@ export function SearchPage() {
               {contextAnalysis.theme && ` con tema de ${contextAnalysis.theme}`}
             </p>
             <p className="text-sm text-gray-600 mt-2">
-              Mostrando {filteredResults.length} productos recomendados de las categorías:{" "}
+              Mostrando {filteredResults.length} productos y servicios recomendados de las categorías:{" "}
               <strong>{contextAnalysis.relevantCategories.join(", ")}</strong>
             </p>
           </div>
@@ -128,8 +138,8 @@ export function SearchPage() {
                   <input
                     type="range"
                     min="0"
-                    max="2000"
-                    step="50"
+                    max={DEFAULT_PRICE_RANGE[1]}
+                    step="500"
                     value={priceRange[1]}
                     onChange={(e) => setPriceRange([priceRange[0], parseInt(e.target.value)])}
                     className="w-full accent-amber-400"
@@ -137,7 +147,7 @@ export function SearchPage() {
                   <div className="flex gap-2 text-xs text-gray-500">
                     <span>$0</span>
                     <span className="flex-1"></span>
-                    <span>$2000</span>
+                    <span>${DEFAULT_PRICE_RANGE[1]}</span>
                   </div>
                 </div>
               </div>
@@ -174,7 +184,7 @@ export function SearchPage() {
                 <button
                   onClick={() => {
                     setMinRating(0);
-                    setPriceRange([0, 2000]);
+                    setPriceRange(DEFAULT_PRICE_RANGE);
                     setSortBy("relevancia");
                   }}
                   className="flex-1 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold transition-colors"
@@ -192,19 +202,19 @@ export function SearchPage() {
           </div>
 
           {/* Indicador de filtros activos */}
-          {(sortBy !== "relevancia" || minRating > 0 || priceRange[1] < 2000) && (
+          {(sortBy !== "relevancia" || minRating > 0 || priceRange[1] < DEFAULT_PRICE_RANGE[1]) && (
             <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-700">
                   <strong>Filtros activos:</strong>{" "}
                   {sortBy !== "relevancia" && `Ordenado por ${sortBy}`}
                   {minRating > 0 && ` • Mín. ${minRating}⭐`}
-                  {priceRange[1] < 2000 && ` • Precio: hasta $${priceRange[1]}`}
+                  {priceRange[1] < DEFAULT_PRICE_RANGE[1] && ` • Precio: hasta $${priceRange[1]}`}
                 </span>
                 <button
                   onClick={() => {
                     setMinRating(0);
-                    setPriceRange([0, 2000]);
+                    setPriceRange(DEFAULT_PRICE_RANGE);
                     setSortBy("relevancia");
                   }}
                   className="text-xs px-2 py-1 bg-amber-200 hover:bg-amber-300 rounded transition-colors font-semibold"
@@ -219,18 +229,18 @@ export function SearchPage() {
           {filteredResults.length > 0 ? (
             <div>
               <div className="mb-4 text-sm text-gray-600">
-                <strong>{filteredResults.length}</strong> de <strong>{searchResults.length}</strong> productos encontrados
+                <strong>{filteredResults.length}</strong> de <strong>{searchResults.length}</strong> articulos encontrados
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {filteredResults.map((product) => (
-                  <ProductCard key={product.id} product={product} />
+                  <ProductCard key={`${product.type}-${product.id}`} product={product} />
                 ))}
               </div>
             </div>
           ) : (
             <div className="col-span-full text-center py-12 bg-gray-100 rounded-lg">
               <p className="text-gray-600 text-lg mb-3">
-                No hay productos que coincidan con tus filtros
+                No hay productos o servicios que coincidan con tus filtros
               </p>
               <p className="text-gray-500 text-sm mb-4">
                 Intenta ajustar los filtros de precio, calificación u ordenamiento
@@ -238,7 +248,7 @@ export function SearchPage() {
               <button
                 onClick={() => {
                   setMinRating(0);
-                  setPriceRange([0, 2000]);
+                  setPriceRange(DEFAULT_PRICE_RANGE);
                   setSortBy("relevancia");
                 }}
                 className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-[#121E2B] rounded-lg font-semibold transition-colors"
@@ -252,7 +262,7 @@ export function SearchPage() {
           {filteredResults.length > 0 && (
             <div className="mt-8 text-center text-gray-600">
               <p className="text-sm">
-                Mostrando {filteredResults.length} de {searchResults.length} productos encontrados
+                Mostrando {filteredResults.length} de {searchResults.length} articulos encontrados
               </p>
             </div>
           )}
@@ -267,7 +277,7 @@ export function SearchPage() {
               Comienza una búsqueda inteligente
             </h2>
             <p className="text-gray-600 mb-4">
-              Describe tu evento en lenguaje natural y nuestro sistema IA analizará tu solicitud para recomendarte los mejores productos.
+              Describe tu evento en lenguaje natural y nuestro sistema IA analizara tu solicitud para recomendarte productos y servicios.
             </p>
           </div>
         </section>

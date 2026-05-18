@@ -143,17 +143,17 @@ export function ProfilePage() {
       return;
     }
     try {
-      await addAddress({ 
-        ...newAddr, 
+      await addAddress({
+        ...newAddr,
         latitud: Number(newAddr.latitud),
         longitud: Number(newAddr.longitud),
-        isDefault: addresses.length === 0 
+        isDefault: addresses.length === 0
       } as any);
       setNewAddr({ label: "", street: "", city: "", state: "", zip: "", country: "", latitud: "", longitud: "" });
       setShowAddAddress(false);
       toast.success("Direccion agregada");
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "Error al agregar direccion";
+      const msg = error instanceof Error ? error.message : "Error al agregar dirección";
       toast.error(msg);
     }
   };
@@ -351,9 +351,8 @@ export function ProfilePage() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center gap-2 px-6 py-4 border-b-2 transition-colors whitespace-nowrap ${
-                activeTab === tab.id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-gray-900"
-              }`}
+              className={`flex items-center gap-2 px-6 py-4 border-b-2 transition-colors whitespace-nowrap ${activeTab === tab.id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-gray-900"
+                }`}
               style={{ fontSize: 14, fontWeight: activeTab === tab.id ? 600 : 500 }}
             >
               {tab.icon} {tab.label}
@@ -487,7 +486,7 @@ export function ProfilePage() {
                     className="px-3 py-2 rounded-lg border border-border bg-white" style={{ fontSize: 14 }}
                     required
                   />
-                  
+
                   {/* Coordenadas */}
                   <div className="sm:col-span-2 flex flex-col sm:flex-row gap-3 items-end bg-white p-3 border border-border rounded-lg mt-2">
                     <div className="flex-1 w-full">
@@ -630,15 +629,6 @@ export function ProfilePage() {
                       required
                     />
                   </div>
-                  <div>
-                    <label className="block mb-1 text-gray-400" style={{ fontSize: 12 }}>Nombre del Propietario</label>
-                    <input
-                      placeholder="Nombre del Propietario"
-                      disabled
-                      className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed"
-                      style={{ fontSize: 14 }}
-                    />
-                  </div>
                   <div className="flex items-end gap-2">
                     <button type="submit" className="px-4 py-2 bg-primary text-white rounded-lg" style={{ fontSize: 14 }}>Guardar</button>
                     <button type="button" onClick={() => setShowAddPayment(false)} className="px-4 py-2 border border-border rounded-lg" style={{ fontSize: 14 }}>Cancelar</button>
@@ -698,10 +688,10 @@ export function ProfilePage() {
                   {myReports.map((r) => {
                     const statusColor =
                       r.estado_reporte === "Pendiente" ? "bg-amber-100 text-amber-700" :
-                      r.estado_reporte === "Resuelto" ? "bg-green-100 text-green-700" :
-                      r.estado_reporte === "Desestimado" ? "bg-slate-100 text-slate-700" :
-                      r.estado_reporte === "Advertencia formal" ? "bg-orange-100 text-orange-700" :
-                      "bg-blue-100 text-blue-700";
+                        r.estado_reporte === "Resuelto" ? "bg-green-100 text-green-700" :
+                          r.estado_reporte === "Desestimado" ? "bg-slate-100 text-slate-700" :
+                            r.estado_reporte === "Advertencia formal" ? "bg-orange-100 text-orange-700" :
+                              "bg-blue-100 text-blue-700";
                     return (
                       <div key={r.id} className="border border-border rounded-xl p-4 hover:bg-gray-50/50 transition-colors">
                         <div className="flex items-start justify-between gap-4">

@@ -142,7 +142,7 @@ export function DynamicCategoryField({
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Descripcion (opcional)"
+            placeholder="Descripción (opcional)"
             className="w-full px-3 py-2 rounded-lg border border-border bg-white outline-none focus:border-primary"
             style={{ fontSize: 14 }}
           />

@@ -2,6 +2,16 @@ const express = require("express");
 
 function createUsuarioWishlistRouter({ pool }) {
 	const router = express.Router();
+	const perfilesValidos = new Set(["comprador", "cliente", "vendedor", "admin"]);
+
+	function validarPerfil(req, res, next) {
+		const perfil = String(req.params?.perfil || "").trim().toLowerCase();
+		if (!perfilesValidos.has(perfil)) {
+			return res.status(404).json({ mensaje: "Perfil no valido" });
+		}
+
+		return next();
+	}
 
 	// Obtiene el id de usuario desde la sesion activa.
 	function obtenerUsuarioSesion(req) {
@@ -73,6 +83,8 @@ function createUsuarioWishlistRouter({ pool }) {
 		return creada.rows[0];
 	}
 
+	router.use("/:perfil/wishlist", validarPerfil);
+
 	// Obtener la wishlist global del usuario con su conteo de items.
 	router.get("/:perfil/wishlist", async (req, res) => {
 		const idUsuario = await requireActiveSession(req, res);
@@ -140,14 +152,63 @@ function createUsuarioWishlistRouter({ pool }) {
 					 wi.id_servicio,
 					 wi.fecha_agregado,
 					 p.nombre AS producto_nombre,
+					 p.descripcion AS producto_descripcion,
 					 p.precio AS producto_precio,
+					 p.stock_total AS producto_stock,
+					 p.calificacion AS producto_calificacion,
 					 p.esta_activo AS producto_activo,
+					 (
+					   SELECT pi.url_imagen
+					   FROM producto_imagenes pi
+					   WHERE pi.id_producto = p.id
+					   ORDER BY pi.es_principal DESC, pi.orden_visual ASC, pi.id ASC
+					   LIMIT 1
+					 ) AS producto_imagen,
+					 np.id AS producto_id_negocio,
+					 np.nombre_comercial AS producto_vendedor,
+					 (
+					   SELECT c.nombre_categoria
+					   FROM producto_categoria pc
+					   INNER JOIN categorias c ON c.id = pc.id_categoria
+					   WHERE pc.id_producto = p.id
+					   ORDER BY c.nombre_categoria ASC
+					   LIMIT 1
+					 ) AS producto_categoria,
 					 s.nombre AS servicio_nombre,
+					 s.descripcion AS servicio_descripcion,
 					 s.precio_base AS servicio_precio,
+					 s.calificacion AS servicio_calificacion,
 					 s.esta_activo AS servicio_activo
+					 ,
+					 (
+					   SELECT si.url_imagen
+					   FROM servicio_imagenes si
+					   WHERE si.id_servicio = s.id
+					   ORDER BY si.es_principal DESC, si.orden_visual ASC, si.id ASC
+					   LIMIT 1
+					 ) AS servicio_imagen,
+					 ns.id AS servicio_id_negocio,
+					 ns.nombre_comercial AS servicio_vendedor,
+					 (
+					   SELECT c.nombre_categoria
+					   FROM servicio_categoria sc
+					   INNER JOIN categorias c ON c.id = sc.id_categoria
+					   WHERE sc.id_servicio = s.id
+					   ORDER BY c.nombre_categoria ASC
+					   LIMIT 1
+					 ) AS servicio_categoria,
+					 (
+					   SELECT COUNT(*)
+					   FROM agenda_servicios ag
+					   WHERE ag.id_servicio = s.id
+					     AND ag.estado = 'disponible'
+					     AND ag.fecha_hora_inicio >= CURRENT_TIMESTAMP
+					 )::int AS servicio_horarios_disponibles
 				 FROM wishlist_items wi
 				 LEFT JOIN productos p ON p.id = wi.id_producto
 				 LEFT JOIN servicios s ON s.id = wi.id_servicio
+				 LEFT JOIN negocios np ON np.id = p.id_negocio
+				 LEFT JOIN negocios ns ON ns.id = s.id_negocio
 				 WHERE wi.id_lista = $1
 				 ORDER BY wi.fecha_agregado DESC, wi.id DESC`,
 				[lista.id]

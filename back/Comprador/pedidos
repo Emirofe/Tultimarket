@@ -44,6 +44,37 @@ function createCompradorPedidosRouter({ pool }) {
 		}
 	}
 
+	function construirResumenCuponDesdeItems(items) {
+		const cupones = new Map();
+
+		for (const item of items) {
+			const cupon = item?.snapshot?.cupon || item?.snapshot_item?.cupon || null;
+			if (!cupon?.codigo_cupon) continue;
+
+			const codigo = String(cupon.codigo_cupon).trim().toUpperCase();
+			if (!codigo) continue;
+
+			const actual = cupones.get(codigo) || {
+				codigo_cupon: codigo,
+				porcentaje_descuento: Number(cupon.porcentaje_descuento) || 0,
+				descuento_aplicado: 0,
+				items_afectados: 0,
+			};
+
+			actual.descuento_aplicado += Number(cupon.descuento_aplicado) || 0;
+			actual.items_afectados += 1;
+			cupones.set(codigo, actual);
+		}
+
+		const resumenes = Array.from(cupones.values()).map((cupon) => ({
+			...cupon,
+			descuento_aplicado: Number(cupon.descuento_aplicado.toFixed(2)),
+		}));
+
+		if (resumenes.length === 0) return null;
+		return resumenes.length === 1 ? resumenes[0] : resumenes;
+	}
+
 	router.get("/comprador/mis-pedidos", async (req, res) => {
 		try {
 			const idUsuario = await requireActiveSession(req, res);
@@ -63,10 +94,15 @@ function createCompradorPedidosRouter({ pool }) {
 					dp.snapshot_item,
 					dp.id_producto,
 					dp.id_servicio,
+					dp.id_agenda_seleccionada,
+					ag.fecha_hora_inicio,
+					ag.fecha_hora_fin,
+					ag.estado AS agenda_estado,
 					prod.nombre AS producto_nombre,
 					srv.nombre AS servicio_nombre
 				 FROM pedidos p
 				 INNER JOIN detalle_pedido dp ON p.id = dp.id_pedido
+				 LEFT JOIN agenda_servicios ag ON dp.id_agenda_seleccionada = ag.id
 				 LEFT JOIN productos prod ON dp.id_producto = prod.id
 				 LEFT JOIN servicios srv ON dp.id_servicio = srv.id
 				 WHERE p.id_usuario = $1
@@ -86,6 +122,7 @@ function createCompradorPedidosRouter({ pool }) {
 						estado: row.estado_pedido,
 						direccion: row.direccion_envio_snapshot,
 						metodo_pago: row.metodo_pago_snapshot,
+						cupon: null,
 						items: [],
 					});
 				}
@@ -102,13 +139,26 @@ function createCompradorPedidosRouter({ pool }) {
 					subtotal: Number(row.cantidad) * Number(row.precio_unitario_historico),
 					imagen: row.snapshot_item?.imagen_principal || null,
 					snapshot: row.snapshot_item,
-				});
+					agenda: row.id_agenda_seleccionada
+						? {
+							id_agenda: row.id_agenda_seleccionada,
+							fecha_inicio: row.fecha_hora_inicio,
+							fecha_fin: row.fecha_hora_fin,
+							estado: row.agenda_estado,
+						}
+						: null,
+					});
+			}
+
+			const pedidos = Array.from(pedidosMap.values());
+			for (const pedido of pedidos) {
+				pedido.cupon = construirResumenCuponDesdeItems(pedido.items);
 			}
 
 			return res.status(200).json({
 				status: "success",
 				total: pedidosMap.size,
-				pedidos: Array.from(pedidosMap.values()),
+				pedidos,
 			});
 		} catch (error) {
 			console.error("Error al obtener pedidos del comprador:", error);
@@ -169,6 +219,30 @@ function createCompradorPedidosRouter({ pool }) {
 			);
 
 			const pedido = pedidoResult.rows[0];
+			const items = itemsResult.rows.map((item) => ({
+				id: item.id,
+				producto_id: item.id_producto,
+				servicio_id: item.id_servicio,
+				tipo: item.id_producto ? "producto" : "servicio",
+				nombre:
+					item.snapshot_item?.nombre ||
+					item.producto_nombre ||
+					item.servicio_nombre ||
+					"Item no disponible",
+				cantidad: Number(item.cantidad),
+				precio: Number(item.precio_unitario_historico),
+				subtotal: Number(item.cantidad) * Number(item.precio_unitario_historico),
+				imagen: item.snapshot_item?.imagen_principal || null,
+				snapshot: item.snapshot_item,
+				agenda: item.id_agenda_seleccionada
+					? {
+						id_agenda: item.id_agenda_seleccionada,
+						fecha_inicio: item.fecha_hora_inicio,
+						fecha_fin: item.fecha_hora_fin,
+						estado: item.agenda_estado,
+					}
+					: null,
+			}));
 
 			return res.status(200).json({
 				status: "success",
@@ -180,30 +254,8 @@ function createCompradorPedidosRouter({ pool }) {
 					estado: pedido.estado_pedido,
 					direccion: pedido.direccion_envio_snapshot,
 					metodo_pago: pedido.metodo_pago_snapshot,
-					items: itemsResult.rows.map((item) => ({
-						id: item.id,
-						producto_id: item.id_producto,
-						servicio_id: item.id_servicio,
-						tipo: item.id_producto ? "producto" : "servicio",
-						nombre:
-							item.snapshot_item?.nombre ||
-							item.producto_nombre ||
-							item.servicio_nombre ||
-							"Item no disponible",
-						cantidad: Number(item.cantidad),
-						precio: Number(item.precio_unitario_historico),
-						subtotal: Number(item.cantidad) * Number(item.precio_unitario_historico),
-						imagen: item.snapshot_item?.imagen_principal || null,
-						snapshot: item.snapshot_item,
-						agenda: item.id_agenda_seleccionada
-							? {
-								id_agenda: item.id_agenda_seleccionada,
-								fecha_inicio: item.fecha_hora_inicio,
-								fecha_fin: item.fecha_hora_fin,
-								estado: item.agenda_estado,
-							}
-							: null,
-					})),
+					cupon: construirResumenCuponDesdeItems(items),
+					items,
 				},
 			});
 		} catch (error) {

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { 
   Package, ChevronDown, ChevronUp, Calendar, Loader2, 
-  CreditCard, MapPin, AlertCircle, ShoppingBag, DollarSign, Ban
+  CreditCard, MapPin, AlertCircle, ShoppingBag, DollarSign, Ban, Clock, Tag, ReceiptText
 } from "lucide-react";
 import { useStore } from "../context/store-context";
 import { Navbar } from "../components/layout/navbar";
@@ -81,6 +81,11 @@ export function OrderHistoryPage() {
       case "CANCELADO": return "bg-red-100 text-red-700";
       default: return "bg-gray-100 text-gray-600";
     }
+  };
+
+  const getCoupons = (cupon: Order["cupon"]) => {
+    if (!cupon) return [];
+    return Array.isArray(cupon) ? cupon : [cupon];
   };
 
   return (
@@ -204,8 +209,15 @@ export function OrderHistoryPage() {
                     <div className="border-t border-border p-5 bg-gray-50/50">
                       
                       {/* Botón de cancelar si aplica */}
-                      {isCancelable && (
-                        <div className="mb-4 flex justify-end">
+                      <div className="mb-4 flex flex-wrap justify-end gap-2">
+                        <Link
+                          to={`/mis-compras/${order.id}`}
+                          className="flex items-center gap-2 rounded-lg border border-border bg-white px-4 py-2 text-primary hover:bg-primary/5"
+                          style={{ fontSize: 14, fontWeight: 500 }}
+                        >
+                          <ReceiptText size={16} /> Ver detalle
+                        </Link>
+                        {isCancelable && (
                           <button
                             onClick={() => handleCancelarPedido(order.id)}
                             disabled={cancelingThis}
@@ -222,8 +234,8 @@ export function OrderHistoryPage() {
                               <><Ban size={16} /> Cancelar Pedido</>
                             )}
                           </button>
-                        </div>
-                      )}
+                        )}
+                      </div>
 
                       {/* Items del pedido */}
                       <div className="space-y-3">
@@ -239,6 +251,12 @@ export function OrderHistoryPage() {
                                 {item.product.name}
                               </Link>
                               <p className="text-muted-foreground" style={{ fontSize: 13 }}>Cantidad: {item.quantity}</p>
+                              {item.product.type === "servicio" && item.selectedDate && item.selectedTime && (
+                                <p className="text-primary flex items-center gap-1 mt-1" style={{ fontSize: 12 }}>
+                                  <Calendar size={13} /> {item.selectedDate}
+                                  <Clock size={13} className="ml-1" /> {item.selectedTime}{item.selectedEndTime ? ` - ${item.selectedEndTime}` : ""}
+                                </p>
+                              )}
                             </div>
                             <p style={{ fontSize: 14, fontWeight: 600 }}>${((Number(item.product.price) || 0) * (Number(item.quantity) || 0)).toFixed(2)}</p>
                           </div>
@@ -246,6 +264,22 @@ export function OrderHistoryPage() {
                       </div>
 
                       {/* Info de dirección y método de pago */}
+                      {getCoupons(order.cupon).length > 0 && (
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {getCoupons(order.cupon).map((cupon) => (
+                            <div
+                              key={cupon.codigo_cupon}
+                              className="inline-flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-green-700"
+                              style={{ fontSize: 13, fontWeight: 500 }}
+                            >
+                              <Tag size={14} />
+                              <span>{cupon.codigo_cupon}</span>
+                              <span>-${Number(cupon.descuento_aplicado || 0).toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
                       <div className="mt-4 pt-4 border-t border-border grid grid-cols-1 md:grid-cols-2 gap-3">
                         {order.address && (
                           <div className="flex items-start gap-2">

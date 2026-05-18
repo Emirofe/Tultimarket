@@ -3,6 +3,66 @@ const express = require("express");
 function createVendedorRouter({ pool }) {
   const router = express.Router();
 
+  async function requireVendedorAuth(req, res, next) {
+    const usuarioId = Number(req.session?.usuario_id || 0);
+    const rol = String(req.session?.rol || "").toLowerCase();
+
+    if (!Number.isInteger(usuarioId) || usuarioId <= 0) {
+      return res.status(401).json({ error: "Debes iniciar sesion" });
+    }
+
+    if (rol !== "vendedor") {
+      return res.status(403).json({ error: "No autorizado para esta accion" });
+    }
+
+    try {
+      const result = await pool.query(
+        `SELECT u.id
+         FROM usuarios u
+         INNER JOIN roles r ON r.id = u.id_rol
+         WHERE u.id = $1
+           AND u.activo = TRUE
+           AND u.fecha_eliminacion IS NULL
+           AND LOWER(r.nombre_rol) = 'vendedor'
+         LIMIT 1`,
+        [usuarioId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(401).json({ error: "Sesion invalida o usuario inactivo" });
+      }
+
+      req.vendedorId = usuarioId;
+      return next();
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: "Error al validar sesion" });
+    }
+  }
+
+  async function obtenerNegocioVendedor(usuarioId) {
+    const result = await pool.query(
+      `SELECT id
+       FROM negocios
+       WHERE id_usuario = $1
+       ORDER BY fecha_creacion DESC, id DESC
+       LIMIT 1`,
+      [usuarioId]
+    );
+
+    return result.rows[0]?.id ?? null;
+  }
+
+  async function requireNegocioVendedor(req, res) {
+    const negocioId = await obtenerNegocioVendedor(Number(req.vendedorId || 0));
+    if (!negocioId) {
+      res.status(404).json({ error: "Negocio no encontrado para el vendedor" });
+      return null;
+    }
+
+    return negocioId;
+  }
+
   // Normaliza un arreglo de IDs y elimina duplicados/valores invalidos.
   function normalizarCategoriasEntrada(rawCategorias) {
     if (!Array.isArray(rawCategorias)) {
@@ -13,7 +73,7 @@ function createVendedorRouter({ pool }) {
   }
 
   // Crea una categoria (producto/servicio/ambos) con soporte de jerarquia por id_padre.
-  router.post("/api/vendedor/categorias", async (req, res) => {
+  router.post("/api/vendedor/categorias", requireVendedorAuth, async (req, res) => {
     try {
       const { nombre_categoria, descripcion, tipo, id_padre } = req.body;
       const nombre = String(nombre_categoria || "").trim();
@@ -66,7 +126,7 @@ function createVendedorRouter({ pool }) {
   });
 
   // Lista categorias y permite filtrar por tipo compatible.
-  router.get("/api/vendedor/categorias", async (req, res) => {
+  router.get("/api/vendedor/categorias", requireVendedorAuth, async (req, res) => {
     try {
       const tipo =
         req.query?.tipo !== undefined && req.query?.tipo !== null && String(req.query.tipo).trim() !== ""
@@ -106,7 +166,7 @@ function createVendedorRouter({ pool }) {
   });
 
   // Lista productos por negocio incluyendo imagen principal.
-  router.get("/api/vendedor/productos/:id_negocio", async (req, res) => {
+  router.get("/api/vendedor/productos/:id_negocio", requireVendedorAuth, async (req, res) => {
     const idNegocio = Number(req.params.id_negocio);
 
     if (!Number.isInteger(idNegocio) || idNegocio <= 0) {
@@ -114,9 +174,26 @@ function createVendedorRouter({ pool }) {
     }
 
     try {
+      const negocioVendedor = await requireNegocioVendedor(req, res);
+      if (!negocioVendedor) return;
+      if (Number(negocioVendedor) !== idNegocio) {
+        return res.status(403).json({ error: "No tienes permiso para consultar este negocio" });
+      }
+
       const result = await pool.query(
         `SELECT p.id, p.id_negocio, p.nombre, p.descripcion, p.precio, p.stock_total, p.sku,
           p.id_descuento, p.esta_activo, p.fecha_registro,
+          d.porcentaje_descuento,
+          d.codigo_cupon,
+          d.fecha_inicio AS fecha_inicio_descuento,
+          d.fecha_fin AS fecha_fin_descuento,
+          (
+            SELECT pc.id_categoria
+            FROM producto_categoria pc
+            WHERE pc.id_producto = p.id
+            ORDER BY pc.id_categoria ASC
+            LIMIT 1
+          ) AS id_categoria,
                 (
                   SELECT pi.url_imagen
                   FROM producto_imagenes pi
@@ -125,7 +202,8 @@ function createVendedorRouter({ pool }) {
                   LIMIT 1
                 ) AS imagen_principal
          FROM productos p
-         WHERE id_negocio = $1
+         LEFT JOIN descuentos d ON d.id = p.id_descuento
+         WHERE p.id_negocio = $1
          ORDER BY p.id DESC`,
         [idNegocio]
       );
@@ -138,16 +216,17 @@ function createVendedorRouter({ pool }) {
   });
 
   // Crea producto con imagenes opcionales y descuento opcional.
-  router.post("/api/vendedor/productos", async (req, res) => {
+  router.post("/api/vendedor/productos", requireVendedorAuth, async (req, res) => {
     const { nombre, descripcion, precio, id_negocio, sku, stock_total, imagenes, id_descuento } = req.body;
-    const idNegocio = Number(id_negocio);
+    const idNegocioSolicitado = Number(id_negocio);
     const precioNum = Number(precio);
     const stockTotalNum =
       stock_total === undefined || stock_total === null || stock_total === "" ? 0 : Number(stock_total);
+    const actualizaDescuento = id_descuento !== undefined;
     const idDescuentoNum =
-      id_descuento === undefined || id_descuento === null || id_descuento === "" ? null : Number(id_descuento);
+      !actualizaDescuento || id_descuento === null || id_descuento === "" ? null : Number(id_descuento);
 
-    if (!nombre || !Number.isFinite(precioNum) || !Number.isInteger(idNegocio) || idNegocio <= 0) {
+    if (!nombre || !Number.isFinite(precioNum)) {
       return res.status(400).json({ error: "Datos incompletos o invalidos" });
     }
 
@@ -155,7 +234,7 @@ function createVendedorRouter({ pool }) {
       return res.status(400).json({ error: "stock_total invalido" });
     }
 
-    if (idDescuentoNum !== null && (!Number.isInteger(idDescuentoNum) || idDescuentoNum <= 0)) {
+    if (actualizaDescuento && idDescuentoNum !== null && (!Number.isInteger(idDescuentoNum) || idDescuentoNum <= 0)) {
       return res.status(400).json({ error: "id_descuento invalido" });
     }
 
@@ -172,13 +251,18 @@ function createVendedorRouter({ pool }) {
     try {
       await client.query("BEGIN");
 
-      const negocio = await client.query("SELECT id FROM negocios WHERE id = $1 LIMIT 1", [idNegocio]);
-      if (negocio.rows.length === 0) {
+      const idNegocio = await requireNegocioVendedor(req, res);
+      if (!idNegocio) {
         await client.query("ROLLBACK");
-        return res.status(404).json({ error: "Negocio no encontrado" });
+        return;
       }
 
-      if (idDescuentoNum !== null) {
+      if (Number.isInteger(idNegocioSolicitado) && idNegocioSolicitado > 0 && idNegocioSolicitado !== Number(idNegocio)) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: "No tienes permiso para crear productos en este negocio" });
+      }
+
+      if (actualizaDescuento && idDescuentoNum !== null) {
         const descuento = await client.query("SELECT id FROM descuentos WHERE id = $1 LIMIT 1", [idDescuentoNum]);
         if (descuento.rows.length === 0) {
           await client.query("ROLLBACK");
@@ -212,6 +296,16 @@ function createVendedorRouter({ pool }) {
         );
       }
 
+      // Crear lote de inventario para que procesar_checkout pueda descontar stock.
+      // Sin esto, el stock_total es solo un número cosmético que el checkout no puede usar.
+      if (stockTotalNum > 0) {
+        await client.query(
+          `INSERT INTO lotes_inventario (id_producto, stock_disponible, fecha_recibido, fecha_caducidad)
+           VALUES ($1, $2, CURRENT_DATE, CURRENT_DATE + INTERVAL '1 year')`,
+          [producto.id, stockTotalNum]
+        );
+      }
+
       const imagenesGuardadas = await client.query(
         `SELECT id, url_imagen, es_principal, orden_visual
          FROM producto_imagenes
@@ -241,13 +335,16 @@ function createVendedorRouter({ pool }) {
   });
 
   // Actualiza producto y, si se envia, reemplaza su galeria completa de imagenes.
-  router.put("/api/vendedor/productos/:id", async (req, res) => {
+  router.put("/api/vendedor/productos/:id", requireVendedorAuth, async (req, res) => {
     const idProducto = Number(req.params.id);
     const { nombre, descripcion, precio, sku, esta_activo, stock_total, imagenes, id_descuento } = req.body;
+    const actualizaSku = sku !== undefined;
+    const skuNormalizado = actualizaSku && sku !== null && String(sku).trim() !== "" ? String(sku).trim() : null;
     const stockTotalNum =
       stock_total === undefined || stock_total === null || stock_total === "" ? null : Number(stock_total);
+    const actualizaDescuento = id_descuento !== undefined;
     const idDescuentoNum =
-      id_descuento === undefined || id_descuento === null || id_descuento === "" ? null : Number(id_descuento);
+      !actualizaDescuento || id_descuento === null || id_descuento === "" ? null : Number(id_descuento);
 
     if (!Number.isInteger(idProducto) || idProducto <= 0) {
       return res.status(400).json({ error: "id invalido" });
@@ -261,7 +358,7 @@ function createVendedorRouter({ pool }) {
       return res.status(400).json({ error: "stock_total invalido" });
     }
 
-    if (idDescuentoNum !== null && (!Number.isInteger(idDescuentoNum) || idDescuentoNum <= 0)) {
+    if (actualizaDescuento && idDescuentoNum !== null && (!Number.isInteger(idDescuentoNum) || idDescuentoNum <= 0)) {
       return res.status(400).json({ error: "id_descuento invalido" });
     }
 
@@ -275,13 +372,18 @@ function createVendedorRouter({ pool }) {
         : [...new Set(imagenes.map((url) => String(url || "").trim()).filter((url) => url.length > 0))];
 
     const activo =
-      esta_activo === undefined || esta_activo === null ? true : Boolean(esta_activo);
+      esta_activo === undefined || esta_activo === null ? null : Boolean(esta_activo);
 
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      const negocioVendedor = await requireNegocioVendedor(req, res);
+      if (!negocioVendedor) {
+        await client.query("ROLLBACK");
+        return;
+      }
 
-      if (idDescuentoNum !== null) {
+      if (actualizaDescuento && idDescuentoNum !== null) {
         const descuento = await client.query("SELECT id FROM descuentos WHERE id = $1 LIMIT 1", [idDescuentoNum]);
         if (descuento.rows.length === 0) {
           await client.query("ROLLBACK");
@@ -294,21 +396,25 @@ function createVendedorRouter({ pool }) {
          SET nombre = $1,
              descripcion = $2,
              precio = $3,
-             sku = $4,
-             esta_activo = $5,
-             stock_total = COALESCE($6, stock_total),
-             id_descuento = $7
-         WHERE id = $8
+             sku = CASE WHEN $4 THEN $5 ELSE sku END,
+             esta_activo = COALESCE($6, esta_activo),
+             stock_total = COALESCE($7, stock_total),
+             id_descuento = CASE WHEN $8 THEN $9 ELSE id_descuento END
+         WHERE id = $10
+           AND id_negocio = $11
          RETURNING id, id_negocio, nombre, descripcion, precio, stock_total, sku, id_descuento, esta_activo, fecha_registro`,
         [
           String(nombre).trim(),
           descripcion ? String(descripcion).trim() : null,
           Number(precio),
-          sku || null,
+          actualizaSku,
+          skuNormalizado,
           activo,
           stockTotalNum,
+          actualizaDescuento,
           idDescuentoNum,
           idProducto,
+          negocioVendedor,
         ]
       );
 
@@ -338,6 +444,39 @@ function createVendedorRouter({ pool }) {
         [idProducto]
       );
 
+      // Sincroniza lotes activos para que el trigger deje productos.stock_total exacto.
+      if (stockTotalNum !== null && stockTotalNum >= 0) {
+        await client.query(
+          `UPDATE lotes_inventario
+           SET stock_disponible = 0
+           WHERE id_producto = $1
+             AND fecha_caducidad >= CURRENT_DATE`,
+          [idProducto]
+        );
+
+        const loteExistente = await client.query(
+          `SELECT id FROM lotes_inventario
+           WHERE id_producto = $1
+             AND fecha_caducidad >= CURRENT_DATE
+           ORDER BY id ASC
+           LIMIT 1`,
+          [idProducto]
+        );
+
+        if (stockTotalNum > 0 && loteExistente.rows.length > 0) {
+          await client.query(
+            `UPDATE lotes_inventario SET stock_disponible = $1 WHERE id = $2`,
+            [stockTotalNum, loteExistente.rows[0].id]
+          );
+        } else if (stockTotalNum > 0) {
+          await client.query(
+            `INSERT INTO lotes_inventario (id_producto, stock_disponible, fecha_recibido, fecha_caducidad)
+             VALUES ($1, $2, CURRENT_DATE, CURRENT_DATE + INTERVAL '1 year')`,
+            [idProducto, stockTotalNum]
+          );
+        }
+      }
+
       await client.query("COMMIT");
 
       return res.status(200).json({
@@ -358,7 +497,7 @@ function createVendedorRouter({ pool }) {
   });
 
   // Reemplaza las categorias asociadas a un producto.
-  router.put("/api/vendedor/productos/:id/categorias", async (req, res) => {
+  router.put("/api/vendedor/productos/:id/categorias", requireVendedorAuth, async (req, res) => {
     const idProducto = Number(req.params.id);
     const categorias = normalizarCategoriasEntrada(req.body?.id_categorias);
 
@@ -373,8 +512,13 @@ function createVendedorRouter({ pool }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      const negocioVendedor = await requireNegocioVendedor(req, res);
+      if (!negocioVendedor) {
+        await client.query("ROLLBACK");
+        return;
+      }
 
-      const producto = await client.query("SELECT id FROM productos WHERE id = $1 LIMIT 1", [idProducto]);
+      const producto = await client.query("SELECT id FROM productos WHERE id = $1 AND id_negocio = $2 LIMIT 1", [idProducto, negocioVendedor]);
       if (producto.rows.length === 0) {
         await client.query("ROLLBACK");
         return res.status(404).json({ error: "Producto no encontrado" });
@@ -432,7 +576,7 @@ function createVendedorRouter({ pool }) {
   });
 
   // Baja logica de producto (no elimina fisicamente el registro).
-  router.delete("/api/vendedor/productos/:id", async (req, res) => {
+  router.delete("/api/vendedor/productos/:id", requireVendedorAuth, async (req, res) => {
     const idProducto = Number(req.params.id);
 
     if (!Number.isInteger(idProducto) || idProducto <= 0) {
@@ -440,12 +584,16 @@ function createVendedorRouter({ pool }) {
     }
 
     try {
+      const negocioVendedor = await requireNegocioVendedor(req, res);
+      if (!negocioVendedor) return;
+
       const result = await pool.query(
         `UPDATE productos
          SET esta_activo = FALSE
          WHERE id = $1
+           AND id_negocio = $2
          RETURNING id`,
-        [idProducto]
+        [idProducto, negocioVendedor]
       );
 
       if (result.rows.length === 0) {
@@ -460,7 +608,7 @@ function createVendedorRouter({ pool }) {
   });
 
   // Lista servicios por negocio incluyendo imagen principal.
-  router.get("/api/vendedor/servicios/:id_negocio", async (req, res) => {
+  router.get("/api/vendedor/servicios/:id_negocio", requireVendedorAuth, async (req, res) => {
     const idNegocio = Number(req.params.id_negocio);
 
     if (!Number.isInteger(idNegocio) || idNegocio <= 0) {
@@ -468,9 +616,40 @@ function createVendedorRouter({ pool }) {
     }
 
     try {
+      const negocioVendedor = await requireNegocioVendedor(req, res);
+      if (!negocioVendedor) return;
+      if (Number(negocioVendedor) !== idNegocio) {
+        return res.status(403).json({ error: "No tienes permiso para consultar este negocio" });
+      }
+
       const result = await pool.query(
         `SELECT s.id, s.id_negocio, s.nombre, s.descripcion, s.precio_base, s.duracion_minutos,
           s.calificacion, s.id_descuento, s.esta_activo, s.fecha_registro,
+          d.porcentaje_descuento,
+          d.codigo_cupon,
+          d.fecha_inicio AS fecha_inicio_descuento,
+          d.fecha_fin AS fecha_fin_descuento,
+          (
+            SELECT sc.id_categoria
+            FROM servicio_categoria sc
+            WHERE sc.id_servicio = s.id
+            ORDER BY sc.id_categoria ASC
+            LIMIT 1
+          ) AS id_categoria,
+          (
+            SELECT COUNT(*)
+            FROM agenda_servicios ag
+            WHERE ag.id_servicio = s.id
+              AND ag.estado = 'disponible'
+              AND ag.fecha_hora_inicio >= CURRENT_TIMESTAMP
+          )::int AS horarios_disponibles,
+          (
+            SELECT MIN(ag.fecha_hora_inicio)
+            FROM agenda_servicios ag
+            WHERE ag.id_servicio = s.id
+              AND ag.estado = 'disponible'
+              AND ag.fecha_hora_inicio >= CURRENT_TIMESTAMP
+          ) AS proximo_horario,
                 (
                   SELECT si.url_imagen
                   FROM servicio_imagenes si
@@ -479,7 +658,8 @@ function createVendedorRouter({ pool }) {
                   LIMIT 1
                 ) AS imagen_principal
          FROM servicios s
-         WHERE id_negocio = $1
+         LEFT JOIN descuentos d ON d.id = s.id_descuento
+         WHERE s.id_negocio = $1
          ORDER BY s.id DESC`,
         [idNegocio]
       );
@@ -492,18 +672,19 @@ function createVendedorRouter({ pool }) {
   });
 
   // Crea servicio con imagenes opcionales y descuento opcional.
-  router.post("/api/vendedor/servicios", async (req, res) => {
+  router.post("/api/vendedor/servicios", requireVendedorAuth, async (req, res) => {
     const { nombre, descripcion, precio_base, duracion_minutos, id_negocio, imagenes, id_descuento } = req.body;
-    const idNegocio = Number(id_negocio);
+    const idNegocioSolicitado = Number(id_negocio);
     const precioBaseNum = Number(precio_base);
     const duracionNum =
       duracion_minutos === undefined || duracion_minutos === null || duracion_minutos === ""
         ? null
         : Number(duracion_minutos);
+    const actualizaDescuento = id_descuento !== undefined;
     const idDescuentoNum =
-      id_descuento === undefined || id_descuento === null || id_descuento === "" ? null : Number(id_descuento);
+      !actualizaDescuento || id_descuento === null || id_descuento === "" ? null : Number(id_descuento);
 
-    if (!nombre || !Number.isFinite(precioBaseNum) || !Number.isInteger(idNegocio) || idNegocio <= 0) {
+    if (!nombre || !Number.isFinite(precioBaseNum)) {
       return res.status(400).json({ error: "Datos incompletos o invalidos" });
     }
 
@@ -511,7 +692,7 @@ function createVendedorRouter({ pool }) {
       return res.status(400).json({ error: "duracion_minutos invalido" });
     }
 
-    if (idDescuentoNum !== null && (!Number.isInteger(idDescuentoNum) || idDescuentoNum <= 0)) {
+    if (actualizaDescuento && idDescuentoNum !== null && (!Number.isInteger(idDescuentoNum) || idDescuentoNum <= 0)) {
       return res.status(400).json({ error: "id_descuento invalido" });
     }
 
@@ -528,13 +709,18 @@ function createVendedorRouter({ pool }) {
     try {
       await client.query("BEGIN");
 
-      const negocio = await client.query("SELECT id FROM negocios WHERE id = $1 LIMIT 1", [idNegocio]);
-      if (negocio.rows.length === 0) {
+      const idNegocio = await requireNegocioVendedor(req, res);
+      if (!idNegocio) {
         await client.query("ROLLBACK");
-        return res.status(404).json({ error: "Negocio no encontrado" });
+        return;
       }
 
-      if (idDescuentoNum !== null) {
+      if (Number.isInteger(idNegocioSolicitado) && idNegocioSolicitado > 0 && idNegocioSolicitado !== Number(idNegocio)) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: "No tienes permiso para crear servicios en este negocio" });
+      }
+
+      if (actualizaDescuento && idDescuentoNum !== null) {
         const descuento = await client.query("SELECT id FROM descuentos WHERE id = $1 LIMIT 1", [idDescuentoNum]);
         if (descuento.rows.length === 0) {
           await client.query("ROLLBACK");
@@ -591,7 +777,7 @@ function createVendedorRouter({ pool }) {
   });
 
   // Actualiza servicio y, si se envia, reemplaza su galeria completa de imagenes.
-  router.put("/api/vendedor/servicios/:id", async (req, res) => {
+  router.put("/api/vendedor/servicios/:id", requireVendedorAuth, async (req, res) => {
     const idServicio = Number(req.params.id);
     const { nombre, descripcion, precio_base, duracion_minutos, esta_activo, imagenes, id_descuento } = req.body;
     const precioBaseNum = Number(precio_base);
@@ -599,8 +785,9 @@ function createVendedorRouter({ pool }) {
       duracion_minutos === undefined || duracion_minutos === null || duracion_minutos === ""
         ? null
         : Number(duracion_minutos);
+    const actualizaDescuento = id_descuento !== undefined;
     const idDescuentoNum =
-      id_descuento === undefined || id_descuento === null || id_descuento === "" ? null : Number(id_descuento);
+      !actualizaDescuento || id_descuento === null || id_descuento === "" ? null : Number(id_descuento);
 
     if (!Number.isInteger(idServicio) || idServicio <= 0) {
       return res.status(400).json({ error: "id invalido" });
@@ -614,7 +801,7 @@ function createVendedorRouter({ pool }) {
       return res.status(400).json({ error: "duracion_minutos invalido" });
     }
 
-    if (idDescuentoNum !== null && (!Number.isInteger(idDescuentoNum) || idDescuentoNum <= 0)) {
+    if (actualizaDescuento && idDescuentoNum !== null && (!Number.isInteger(idDescuentoNum) || idDescuentoNum <= 0)) {
       return res.status(400).json({ error: "id_descuento invalido" });
     }
 
@@ -628,13 +815,18 @@ function createVendedorRouter({ pool }) {
         : [...new Set(imagenes.map((url) => String(url || "").trim()).filter((url) => url.length > 0))];
 
     const activo =
-      esta_activo === undefined || esta_activo === null ? true : Boolean(esta_activo);
+      esta_activo === undefined || esta_activo === null ? null : Boolean(esta_activo);
 
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      const negocioVendedor = await requireNegocioVendedor(req, res);
+      if (!negocioVendedor) {
+        await client.query("ROLLBACK");
+        return;
+      }
 
-      if (idDescuentoNum !== null) {
+      if (actualizaDescuento && idDescuentoNum !== null) {
         const descuento = await client.query("SELECT id FROM descuentos WHERE id = $1 LIMIT 1", [idDescuentoNum]);
         if (descuento.rows.length === 0) {
           await client.query("ROLLBACK");
@@ -648,9 +840,10 @@ function createVendedorRouter({ pool }) {
              descripcion = $2,
              precio_base = $3,
              duracion_minutos = $4,
-             esta_activo = $5,
-             id_descuento = $6
-         WHERE id = $7
+             esta_activo = COALESCE($5, esta_activo),
+             id_descuento = CASE WHEN $6 THEN $7 ELSE id_descuento END
+         WHERE id = $8
+           AND id_negocio = $9
          RETURNING id, id_negocio, nombre, descripcion, precio_base, duracion_minutos, calificacion, id_descuento, esta_activo, fecha_registro`,
         [
           String(nombre).trim(),
@@ -658,8 +851,10 @@ function createVendedorRouter({ pool }) {
           precioBaseNum,
           duracionNum,
           activo,
+          actualizaDescuento,
           idDescuentoNum,
           idServicio,
+          negocioVendedor,
         ]
       );
 
@@ -705,7 +900,7 @@ function createVendedorRouter({ pool }) {
   });
 
   // Reemplaza las categorias asociadas a un servicio.
-  router.put("/api/vendedor/servicios/:id/categorias", async (req, res) => {
+  router.put("/api/vendedor/servicios/:id/categorias", requireVendedorAuth, async (req, res) => {
     const idServicio = Number(req.params.id);
     const categorias = normalizarCategoriasEntrada(req.body?.id_categorias);
 
@@ -720,8 +915,13 @@ function createVendedorRouter({ pool }) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      const negocioVendedor = await requireNegocioVendedor(req, res);
+      if (!negocioVendedor) {
+        await client.query("ROLLBACK");
+        return;
+      }
 
-      const servicio = await client.query("SELECT id FROM servicios WHERE id = $1 LIMIT 1", [idServicio]);
+      const servicio = await client.query("SELECT id FROM servicios WHERE id = $1 AND id_negocio = $2 LIMIT 1", [idServicio, negocioVendedor]);
       if (servicio.rows.length === 0) {
         await client.query("ROLLBACK");
         return res.status(404).json({ error: "Servicio no encontrado" });
@@ -779,7 +979,7 @@ function createVendedorRouter({ pool }) {
   });
 
   // Baja logica de servicio (no elimina fisicamente el registro).
-  router.delete("/api/vendedor/servicios/:id", async (req, res) => {
+  router.delete("/api/vendedor/servicios/:id", requireVendedorAuth, async (req, res) => {
     const idServicio = Number(req.params.id);
 
     if (!Number.isInteger(idServicio) || idServicio <= 0) {
@@ -787,12 +987,16 @@ function createVendedorRouter({ pool }) {
     }
 
     try {
+      const negocioVendedor = await requireNegocioVendedor(req, res);
+      if (!negocioVendedor) return;
+
       const result = await pool.query(
         `UPDATE servicios
          SET esta_activo = FALSE
          WHERE id = $1
+           AND id_negocio = $2
          RETURNING id`,
-        [idServicio]
+        [idServicio, negocioVendedor]
       );
 
       if (result.rows.length === 0) {

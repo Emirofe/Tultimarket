@@ -17,8 +17,8 @@ import {
   Brain,
 } from "lucide-react";
 import { useStore } from "../../context/store-context";
-import { products } from "../../data/mock-data";
-import { getTopCategoriasApi } from "../../api/api-client";
+import { type Product } from "../../data/mock-data";
+import { getAllProductosApi, getServiciosGlobalApi, getTopCategoriasApi } from "../../api/api-client";
 
 export function Navbar() {
   const { currentUser, isLoggedIn, logout, getCartCount, wishlist } = useStore();
@@ -27,6 +27,7 @@ export function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [topCategories, setTopCategories] = useState<{ id: string; name: string; total: number }[]>([]);
+  const [catalogSuggestions, setCatalogSuggestions] = useState<Product[]>([]);
   const navScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -34,20 +35,46 @@ export function Navbar() {
       .then((cats) => setTopCategories(cats))
       .catch(() => setTopCategories([]));
   }, []);
+
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length <= 1) {
+      setCatalogSuggestions([]);
+      return;
+    }
+
+    let isActive = true;
+    const timer = window.setTimeout(() => {
+      Promise.all([
+        getAllProductosApi({ q, ordenar: "relevancia" }).catch(() => []),
+        getServiciosGlobalApi({ q, ordenar: "relevancia" }).catch(() => []),
+      ])
+        .then(([prods, servs]) => {
+          if (!isActive) return;
+          const unique = Array.from(new Map([...prods, ...servs].map((p) => [`${p.type}-${p.id}`, p])).values());
+          setCatalogSuggestions(unique.slice(0, 5));
+        })
+        .catch(() => {
+          if (isActive) setCatalogSuggestions([]);
+        });
+    }, 250);
+
+    return () => {
+      isActive = false;
+      window.clearTimeout(timer);
+    };
+  }, [searchQuery]);
   const navigate = useNavigate();
   const cartCount = getCartCount();
 
-  const suggestions = searchQuery.length > 1
-    ? products.filter((p) =>
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.category.toLowerCase().includes(searchQuery.toLowerCase())
-      ).slice(0, 5)
-    : [];
+  const suggestions = catalogSuggestions;
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
+    const query = searchQuery.trim();
+    if (!query) return;
     setShowSuggestions(false);
-    navigate(`/?buscar=${encodeURIComponent(searchQuery)}`);
+    navigate(`/?buscar=${encodeURIComponent(query)}`);
   };
 
   const getDashboardLink = () => {
@@ -78,7 +105,7 @@ export function Navbar() {
             <div className="flex rounded-lg overflow-hidden">
               <input
                 type="text"
-                placeholder="Buscar productos para tu fiesta..."
+                placeholder="Buscar productos o servicios..."
                 value={searchQuery}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
@@ -102,8 +129,8 @@ export function Navbar() {
               <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-xl border border-border overflow-hidden z-50">
                 {suggestions.map((product) => (
                   <Link
-                    key={product.id}
-                    to={`/producto/${product.id}`}
+                    key={`${product.type}-${product.id}`}
+                    to={`/producto/${product.id}${product.type === "servicio" ? "?type=servicio" : ""}`}
                     className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-foreground transition-colors"
                     onClick={() => setShowSuggestions(false)}
                   >
@@ -115,7 +142,7 @@ export function Navbar() {
                     <div className="flex-1 min-w-0">
                       <p className="truncate" style={{ fontSize: 14 }}>{product.name}</p>
                       <p className="text-primary" style={{ fontSize: 13, fontWeight: 600 }}>
-                        ${product.price.toFixed(2)}
+                        ${product.price.toFixed(2)} · {product.type === "servicio" ? "Servicio" : "Producto"}
                       </p>
                     </div>
                   </Link>

@@ -1,124 +1,218 @@
 import { useEffect, useMemo, useState } from "react";
-import { Calendar as CalendarIcon, CheckCircle2, Clock, Loader2, Plus, Trash2, XCircle } from "lucide-react";
-import { getServiciosVendedorApi } from "../../api/api-client";
+import { useSearchParams } from "react-router";
+import { Calendar as CalendarIcon, Clock, Edit, Loader2, Plus, Trash2, User } from "lucide-react";
+import {
+  createAgendaServicioVendedorApi,
+  deleteAgendaVendedorApi,
+  getAgendaServicioVendedorApi,
+  getServiciosVendedorApi,
+  type SellerAgendaSlot,
+  updateAgendaVendedorApi,
+} from "../../api/api-client";
 import { useStore } from "../../context/store-context";
 import { toast } from "sonner";
 
 type SellerService = Awaited<ReturnType<typeof getServiciosVendedorApi>>[number];
 
-interface Appointment {
-  id: string;
-  serviceId: number;
-  client: string;
-  date: string;
-  time: string;
-  status: "Pendiente" | "Confirmado" | "Cancelado";
-}
-
-interface Availability {
-  days: Record<string, boolean>;
-  start: string;
-  end: string;
-}
-
-const defaultAvailability: Availability = {
-  days: {
-    Lunes: true,
-    Martes: true,
-    Miercoles: true,
-    Jueves: true,
-    Viernes: true,
-    Sabado: false,
-    Domingo: false,
-  },
-  start: "09:00",
-  end: "18:00",
+const emptyForm = {
+  date: "",
+  startTime: "",
+  endTime: "",
 };
+
+function toInputDate(value: string) {
+  return new Date(value).toISOString().split("T")[0];
+}
+
+function toInputTime(value: string) {
+  return new Date(value).toLocaleTimeString("es-MX", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function formatDate(value: string) {
+  return new Date(value).toLocaleDateString("es-MX", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function formatTime(value: string) {
+  return new Date(value).toLocaleTimeString("es-MX", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function composeDateTime(date: string, time: string) {
+  return `${date}T${time}:00`;
+}
+
+function addMinutesToTime(date: string, time: string, minutes?: number | null) {
+  if (!date || !time || !minutes) return "";
+  const next = new Date(composeDateTime(date, time));
+  next.setMinutes(next.getMinutes() + minutes);
+  return next.toTimeString().slice(0, 5);
+}
 
 export function SellerAgendaPage() {
   const { negocioId } = useStore();
-  const storageKey = `seller-agenda-${negocioId ?? "none"}`;
+  const [searchParams] = useSearchParams();
   const [services, setServices] = useState<SellerService[]>([]);
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [availability, setAvailability] = useState<Availability>(defaultAvailability);
-  const [loading, setLoading] = useState(true);
-  const [formData, setFormData] = useState({
-    serviceId: "",
-    client: "",
-    date: "",
-    time: "",
-  });
+  const [selectedServiceId, setSelectedServiceId] = useState("");
+  const [slots, setSlots] = useState<SellerAgendaSlot[]>([]);
+  const [loadingServices, setLoadingServices] = useState(true);
+  const [loadingAgenda, setLoadingAgenda] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editingSlotId, setEditingSlotId] = useState<number | null>(null);
+  const [formData, setFormData] = useState(emptyForm);
+
+  const selectedService = useMemo(
+    () => services.find((service) => String(service.id) === selectedServiceId),
+    [services, selectedServiceId]
+  );
+
+  const visibleSlots = useMemo(
+    () => [...slots].sort((a, b) => new Date(a.fecha_hora_inicio).getTime() - new Date(b.fecha_hora_inicio).getTime()),
+    [slots]
+  );
+
+  const availableCount = visibleSlots.filter((slot) => slot.estado === "disponible").length;
+  const reservedCount = visibleSlots.filter((slot) => slot.estado !== "disponible").length;
+
+  const loadAgenda = async (serviceId: string) => {
+    if (!serviceId) {
+      setSlots([]);
+      return;
+    }
+
+    setLoadingAgenda(true);
+    try {
+      setSlots(await getAgendaServicioVendedorApi(Number(serviceId)));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Error al cargar agenda");
+      setSlots([]);
+    } finally {
+      setLoadingAgenda(false);
+    }
+  };
 
   useEffect(() => {
     if (!negocioId) {
-      setLoading(false);
+      setLoadingServices(false);
       return;
     }
 
-    const saved = window.localStorage.getItem(storageKey);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      setAppointments(parsed.appointments ?? []);
-      setAvailability(parsed.availability ?? defaultAvailability);
-    }
-
+    setLoadingServices(true);
     getServiciosVendedorApi(negocioId)
-      .then((data) => setServices(data.filter((service) => service.esta_activo)))
-      .catch(() => toast.error("Error al cargar servicios para agenda"))
-      .finally(() => setLoading(false));
-  }, [negocioId, storageKey]);
+      .then((data) => {
+        const activeServices = data.filter((service) => service.esta_activo);
+        setServices(activeServices);
+        const serviceFromUrl = searchParams.get("servicio");
+        const initialService =
+          activeServices.find((service) => String(service.id) === serviceFromUrl) ?? activeServices[0];
+        setSelectedServiceId(initialService ? String(initialService.id) : "");
+      })
+      .catch(() => toast.error("Error al cargar servicios"))
+      .finally(() => setLoadingServices(false));
+  }, [negocioId, searchParams]);
 
-  const saveAgenda = (nextAppointments = appointments, nextAvailability = availability) => {
-    setAppointments(nextAppointments);
-    setAvailability(nextAvailability);
-    window.localStorage.setItem(
-      storageKey,
-      JSON.stringify({ appointments: nextAppointments, availability: nextAvailability })
-    );
+  useEffect(() => {
+    loadAgenda(selectedServiceId);
+  }, [selectedServiceId]);
+
+  const resetForm = () => {
+    setEditingSlotId(null);
+    setFormData(emptyForm);
   };
 
-  const serviceById = useMemo(() => {
-    return new Map(services.map((service) => [service.id, service]));
-  }, [services]);
-
-  const updateAppointmentStatus = (id: string, status: Appointment["status"]) => {
-    saveAgenda(appointments.map((appointment) => appointment.id === id ? { ...appointment, status } : appointment));
-    toast.success(`Cita ${status.toLowerCase()}`);
+  const handleStartTimeChange = (startTime: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      startTime,
+      endTime: addMinutesToTime(prev.date, startTime, selectedService?.duracion_minutos) || prev.endTime,
+    }));
   };
 
-  const deleteAppointment = (id: string) => {
-    saveAgenda(appointments.filter((appointment) => appointment.id !== id));
-    toast.success("Cita eliminada");
-  };
-
-  const handleAddAppointment = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!formData.serviceId || !formData.client || !formData.date || !formData.time) {
-      toast.error("Completa los datos de la cita");
+    if (!selectedServiceId) {
+      toast.error("Selecciona un servicio");
       return;
     }
 
-    const next: Appointment = {
-      id: `appointment-${Date.now()}`,
-      serviceId: Number(formData.serviceId),
-      client: formData.client.trim(),
-      date: formData.date,
-      time: formData.time,
-      status: "Pendiente",
+    if (!formData.date || !formData.startTime || !formData.endTime) {
+      toast.error("Completa fecha, hora inicio y hora fin");
+      return;
+    }
+
+    const payload = {
+      fecha_hora_inicio: composeDateTime(formData.date, formData.startTime),
+      fecha_hora_fin: composeDateTime(formData.date, formData.endTime),
     };
 
-    saveAgenda([...appointments, next].sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)));
-    setFormData({ serviceId: "", client: "", date: "", time: "" });
-    toast.success("Cita agregada");
+    setSaving(true);
+    try {
+      if (editingSlotId) {
+        await updateAgendaVendedorApi(editingSlotId, payload);
+        toast.success("Horario actualizado");
+      } else {
+        await createAgendaServicioVendedorApi(Number(selectedServiceId), payload);
+        toast.success("Horario disponible creado");
+      }
+      resetForm();
+      await loadAgenda(selectedServiceId);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo guardar el horario");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const saveAvailability = () => {
-    saveAgenda(appointments, availability);
-    toast.success("Disponibilidad guardada");
+  const editSlot = (slot: SellerAgendaSlot) => {
+    if (slot.estado !== "disponible") {
+      toast.error("Solo puedes editar horarios disponibles");
+      return;
+    }
+
+    setEditingSlotId(slot.id);
+    setFormData({
+      date: toInputDate(slot.fecha_hora_inicio),
+      startTime: toInputTime(slot.fecha_hora_inicio),
+      endTime: toInputTime(slot.fecha_hora_fin),
+    });
   };
 
-  if (loading) {
+  const deleteSlot = async (slot: SellerAgendaSlot) => {
+    if (slot.estado !== "disponible") {
+      toast.error("No puedes eliminar un horario reservado");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await deleteAgendaVendedorApi(slot.id);
+      toast.success("Horario eliminado");
+      await loadAgenda(selectedServiceId);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo eliminar el horario");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!negocioId) {
+    return (
+      <div className="text-center py-20">
+        <p className="text-muted-foreground" style={{ fontSize: 18 }}>No tienes un negocio vinculado a tu cuenta.</p>
+      </div>
+    );
+  }
+
+  if (loadingServices) {
     return (
       <div className="flex justify-center py-20">
         <Loader2 className="animate-spin text-primary" size={40} />
@@ -132,105 +226,172 @@ export function SellerAgendaPage() {
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 600 }}>Mi Agenda</h1>
           <p className="text-muted-foreground mt-1" style={{ fontSize: 14 }}>
-            Gestiona disponibilidad y citas de tus servicios.
+            Publica horarios reales para que tus clientes puedan agendar servicios.
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div className="xl:col-span-1 border border-border bg-white rounded-xl p-6 h-fit">
-          <h2 className="mb-4 flex items-center gap-2" style={{ fontSize: 18, fontWeight: 600 }}>
-            <CalendarIcon size={20} className="text-primary" /> Dias Disponibles
-          </h2>
-          <div className="space-y-3">
-            {Object.entries(availability.days).map(([day, isAvailable]) => (
-              <div key={day} className="flex items-center justify-between">
-                <span style={{ fontSize: 14 }}>{day}</span>
-                <button
-                  type="button"
-                  onClick={() => setAvailability((prev) => ({ ...prev, days: { ...prev.days, [day]: !isAvailable } }))}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isAvailable ? "bg-primary" : "bg-gray-200"}`}
-                >
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isAvailable ? "translate-x-6" : "translate-x-1"}`} />
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-6 pt-6 border-t border-border">
-            <h3 className="mb-3" style={{ fontSize: 14, fontWeight: 500 }}>Horario Base</h3>
-            <div className="flex gap-2">
-              <input type="time" value={availability.start} onChange={(e) => setAvailability((prev) => ({ ...prev, start: e.target.value }))} className="flex-1 px-3 py-2 border border-border rounded-lg" style={{ fontSize: 13 }} />
-              <span className="self-center">a</span>
-              <input type="time" value={availability.end} onChange={(e) => setAvailability((prev) => ({ ...prev, end: e.target.value }))} className="flex-1 px-3 py-2 border border-border rounded-lg" style={{ fontSize: 13 }} />
-            </div>
-            <button onClick={saveAvailability} className="w-full mt-4 bg-primary text-white py-2 rounded-lg" style={{ fontSize: 14 }}>
-              Guardar Cambios
-            </button>
-          </div>
+      {services.length === 0 ? (
+        <div className="bg-white border border-border rounded-xl p-8 text-center">
+          <CalendarIcon size={40} className="mx-auto text-muted-foreground mb-3" />
+          <p className="text-muted-foreground" style={{ fontSize: 14 }}>Crea un servicio activo antes de configurar horarios.</p>
         </div>
-
-        <div className="xl:col-span-2 space-y-6">
-          <form onSubmit={handleAddAppointment} className="bg-white border border-border rounded-xl p-6">
-            <h2 className="mb-4 flex items-center gap-2" style={{ fontSize: 18, fontWeight: 600 }}>
-              <Plus size={18} className="text-primary" /> Nueva cita
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <select value={formData.serviceId} onChange={(e) => setFormData((prev) => ({ ...prev, serviceId: e.target.value }))} className="px-4 py-3 rounded-lg border border-border bg-white" required>
-                <option value="">Servicio</option>
+      ) : (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <div className="xl:col-span-1 space-y-4">
+            <div className="border border-border bg-white rounded-xl p-6">
+              <h2 className="mb-4 flex items-center gap-2" style={{ fontSize: 18, fontWeight: 600 }}>
+                <CalendarIcon size={20} className="text-primary" /> Servicio
+              </h2>
+              <select
+                value={selectedServiceId}
+                onChange={(e) => {
+                  setSelectedServiceId(e.target.value);
+                  resetForm();
+                }}
+                className="w-full px-4 py-3 rounded-lg border border-border bg-white"
+              >
                 {services.map((service) => (
                   <option key={service.id} value={service.id}>{service.nombre}</option>
                 ))}
               </select>
-              <input value={formData.client} onChange={(e) => setFormData((prev) => ({ ...prev, client: e.target.value }))} placeholder="Cliente" className="px-4 py-3 rounded-lg border border-border" required />
-              <input type="date" value={formData.date} onChange={(e) => setFormData((prev) => ({ ...prev, date: e.target.value }))} className="px-4 py-3 rounded-lg border border-border" required />
-              <input type="time" value={formData.time} onChange={(e) => setFormData((prev) => ({ ...prev, time: e.target.value }))} className="px-4 py-3 rounded-lg border border-border" required />
-            </div>
-            <button type="submit" disabled={services.length === 0} className="mt-4 bg-primary text-white px-5 py-2.5 rounded-lg disabled:opacity-50" style={{ fontSize: 14 }}>
-              Agregar cita
-            </button>
-            {services.length === 0 && <p className="text-muted-foreground mt-3" style={{ fontSize: 13 }}>Crea un servicio activo antes de agendar citas.</p>}
-          </form>
 
-          <div className="bg-white border border-border rounded-xl p-6">
-            <h2 className="mb-4" style={{ fontSize: 18, fontWeight: 600 }}>Proximas Citas</h2>
-            {appointments.length === 0 ? (
-              <p className="text-muted-foreground text-center py-6">No tienes citas programadas.</p>
+              {selectedService && (
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <div className="rounded-lg bg-primary/5 p-3">
+                    <p className="text-muted-foreground" style={{ fontSize: 12 }}>Disponibles</p>
+                    <p className="text-primary" style={{ fontSize: 22, fontWeight: 700 }}>{availableCount}</p>
+                  </div>
+                  <div className="rounded-lg bg-amber-50 p-3">
+                    <p className="text-muted-foreground" style={{ fontSize: 12 }}>Reservados</p>
+                    <p className="text-amber-700" style={{ fontSize: 22, fontWeight: 700 }}>{reservedCount}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleSubmit} className="bg-white border border-border rounded-xl p-6">
+              <h2 className="mb-4 flex items-center gap-2" style={{ fontSize: 18, fontWeight: 600 }}>
+                {editingSlotId ? <Edit size={18} className="text-primary" /> : <Plus size={18} className="text-primary" />}
+                {editingSlotId ? "Editar horario" : "Nuevo horario"}
+              </h2>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>Fecha</label>
+                  <input
+                    type="date"
+                    min={new Date().toISOString().split("T")[0]}
+                    value={formData.date}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, date: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-lg border border-border"
+                    required
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>Inicio</label>
+                    <input
+                      type="time"
+                      value={formData.startTime}
+                      onChange={(e) => handleStartTimeChange(e.target.value)}
+                      className="w-full px-4 py-3 rounded-lg border border-border"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>Fin</label>
+                    <input
+                      type="time"
+                      value={formData.endTime}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, endTime: e.target.value }))}
+                      className="w-full px-4 py-3 rounded-lg border border-border"
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-2 mt-4">
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex-1 bg-primary text-white py-2.5 rounded-lg disabled:opacity-50"
+                  style={{ fontSize: 14, fontWeight: 600 }}
+                >
+                  {saving ? "Guardando..." : editingSlotId ? "Actualizar" : "Crear horario"}
+                </button>
+                {editingSlotId && (
+                  <button type="button" onClick={resetForm} className="px-4 py-2.5 border border-border rounded-lg" style={{ fontSize: 14 }}>
+                    Cancelar
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+
+          <div className="xl:col-span-2 bg-white border border-border rounded-xl p-6">
+            <h2 className="mb-4" style={{ fontSize: 18, fontWeight: 600 }}>Horarios del servicio</h2>
+            {loadingAgenda ? (
+              <div className="flex justify-center py-16">
+                <Loader2 className="animate-spin text-primary" size={32} />
+              </div>
+            ) : visibleSlots.length === 0 ? (
+              <p className="text-muted-foreground text-center py-10" style={{ fontSize: 14 }}>
+                Aun no hay horarios publicados para este servicio.
+              </p>
             ) : (
-              <div className="space-y-4">
-                {appointments.map((appointment) => (
-                  <div key={appointment.id} className="border border-border rounded-lg p-4 flex flex-col lg:flex-row gap-4 justify-between items-start lg:items-center">
-                    <div>
-                      <h3 style={{ fontSize: 16, fontWeight: 500 }}>{serviceById.get(appointment.serviceId)?.nombre ?? "Servicio eliminado"}</h3>
-                      <p className="text-muted-foreground" style={{ fontSize: 13 }}>Cliente: {appointment.client}</p>
-                      <div className="flex items-center gap-4 mt-2 flex-wrap">
-                        <span className="flex items-center gap-1 text-primary bg-primary/10 px-2 py-0.5 rounded" style={{ fontSize: 12 }}>
-                          <CalendarIcon size={14} /> {appointment.date}
-                        </span>
-                        <span className="flex items-center gap-1 text-primary bg-primary/10 px-2 py-0.5 rounded" style={{ fontSize: 12 }}>
-                          <Clock size={14} /> {appointment.time}
-                        </span>
-                        <span className="text-muted-foreground" style={{ fontSize: 12 }}>{appointment.status}</span>
+              <div className="space-y-3">
+                {visibleSlots.map((slot) => {
+                  const reserved = slot.estado !== "disponible";
+                  return (
+                    <div key={slot.id} className="border border-border rounded-xl p-4 flex flex-col lg:flex-row gap-4 justify-between">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="flex items-center gap-1 text-primary bg-primary/10 px-2 py-0.5 rounded" style={{ fontSize: 12 }}>
+                            <CalendarIcon size={14} /> {formatDate(slot.fecha_hora_inicio)}
+                          </span>
+                          <span className="flex items-center gap-1 text-primary bg-primary/10 px-2 py-0.5 rounded" style={{ fontSize: 12 }}>
+                            <Clock size={14} /> {formatTime(slot.fecha_hora_inicio)} - {formatTime(slot.fecha_hora_fin)}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded ${reserved ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700"}`} style={{ fontSize: 12 }}>
+                            {reserved ? "Reservado" : "Disponible"}
+                          </span>
+                        </div>
+                        {slot.cliente && (
+                          <p className="flex items-center gap-1 text-muted-foreground mt-2" style={{ fontSize: 13 }}>
+                            <User size={14} /> {slot.cliente.nombre} ({slot.cliente.email})
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => editSlot(slot)}
+                          disabled={reserved || saving}
+                          className="px-3 py-2 border border-border rounded-lg text-muted-foreground hover:text-primary disabled:opacity-40"
+                          title="Editar horario"
+                        >
+                          <Edit size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteSlot(slot)}
+                          disabled={reserved || saving}
+                          className="px-3 py-2 border border-border rounded-lg text-muted-foreground hover:text-red-600 disabled:opacity-40"
+                          title="Eliminar horario"
+                        >
+                          <Trash2 size={16} />
+                        </button>
                       </div>
                     </div>
-                    <div className="flex gap-2 w-full lg:w-auto">
-                      <button onClick={() => updateAppointmentStatus(appointment.id, "Confirmado")} className="flex-1 lg:flex-none flex justify-center items-center gap-2 px-3 py-2 bg-green-50 text-green-600 border border-green-200 rounded-lg hover:bg-green-100" type="button">
-                        <CheckCircle2 size={16} /> <span style={{ fontSize: 13 }}>Confirmar</span>
-                      </button>
-                      <button onClick={() => updateAppointmentStatus(appointment.id, "Cancelado")} className="flex-1 lg:flex-none flex justify-center items-center gap-2 px-3 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100" type="button">
-                        <XCircle size={16} /> <span style={{ fontSize: 13 }}>Cancelar</span>
-                      </button>
-                      <button onClick={() => deleteAppointment(appointment.id)} className="px-3 py-2 border border-border rounded-lg text-muted-foreground hover:text-red-600" type="button" title="Eliminar">
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

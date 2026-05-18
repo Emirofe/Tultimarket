@@ -90,6 +90,7 @@ function createCompradorCarritoRouter({ pool }) {
 			     ELSE s.precio_base
 			   END AS precio_servicio_vigente,
 			   COALESCE(np.nombre_comercial, ns.nombre_comercial, '') AS empresa,
+			   ag.id AS agenda_id,
 			   ag.fecha_hora_inicio,
 			   ag.fecha_hora_fin,
 			   ag.estado AS estado_agenda
@@ -136,6 +137,7 @@ function createCompradorCarritoRouter({ pool }) {
 				stock_maximo: esProducto ? Number(item.stock_producto || 0) : 99,
 				agenda: item.id_agenda_seleccionada
 					? {
+						id_agenda: item.agenda_id,
 						fecha_hora_inicio: item.fecha_hora_inicio,
 						fecha_hora_fin: item.fecha_hora_fin,
 						estado: item.estado_agenda,
@@ -236,6 +238,218 @@ function createCompradorCarritoRouter({ pool }) {
 			ultimos_cuatro: m.ultimos_cuatro,
 			fecha_expiracion: m.fecha_expiracion,
 		};
+	}
+
+	function normalizarCodigoCupon(valor) {
+		const codigo = String(valor || "").trim().toUpperCase();
+		return codigo.length > 0 ? codigo : null;
+	}
+
+	function calcularPrecioConPorcentaje(precioBase, porcentaje) {
+		return Number((Number(precioBase || 0) * (1 - Number(porcentaje || 0) / 100)).toFixed(2));
+	}
+
+	async function calcularResumenCheckout(client, idUsuario, codigoCuponRaw = null) {
+		const codigoCupon = normalizarCodigoCupon(codigoCuponRaw);
+		let cupon = null;
+
+		if (codigoCupon) {
+			const cuponResult = await client.query(
+				`SELECT id, codigo_cupon, porcentaje_descuento, fecha_inicio, fecha_fin
+				 FROM descuentos
+				 WHERE UPPER(codigo_cupon) = $1
+				   AND CURRENT_TIMESTAMP BETWEEN fecha_inicio AND fecha_fin
+				 LIMIT 1`,
+				[codigoCupon]
+			);
+
+			if (cuponResult.rows.length === 0) {
+				const error = new Error("Codigo de cupon invalido o expirado");
+				error.statusCode = 404;
+				throw error;
+			}
+
+			cupon = cuponResult.rows[0];
+		}
+
+		const result = await client.query(
+			`SELECT
+			   ci.id AS id_item,
+			   ci.cantidad,
+			   ci.id_producto,
+			   ci.id_servicio,
+			   ci.id_agenda_seleccionada,
+			   p.nombre AS nombre_producto,
+			   p.precio AS precio_producto,
+			   p.esta_activo AS producto_activo,
+			   dp.id AS id_descuento_producto,
+			   dp.codigo_cupon AS codigo_cupon_producto,
+			   dp.porcentaje_descuento AS porcentaje_producto,
+			   dp.fecha_inicio AS inicio_producto,
+			   dp.fecha_fin AS fin_producto,
+			   s.nombre AS nombre_servicio,
+			   s.precio_base AS precio_servicio,
+			   s.esta_activo AS servicio_activo,
+			   ds.id AS id_descuento_servicio,
+			   ds.codigo_cupon AS codigo_cupon_servicio,
+			   ds.porcentaje_descuento AS porcentaje_servicio,
+			   ds.fecha_inicio AS inicio_servicio,
+			   ds.fecha_fin AS fin_servicio
+			 FROM carrito_items ci
+			 INNER JOIN carrito c ON c.id = ci.id_carrito
+			 LEFT JOIN productos p ON p.id = ci.id_producto
+			 LEFT JOIN descuentos dp ON dp.id = p.id_descuento
+			 LEFT JOIN servicios s ON s.id = ci.id_servicio
+			 LEFT JOIN descuentos ds ON ds.id = s.id_descuento
+			 WHERE c.id_usuario = $1
+			   AND (ci.id_producto IS NULL OR p.esta_activo = TRUE)
+			   AND (ci.id_servicio IS NULL OR s.esta_activo = TRUE)
+			 ORDER BY ci.id ASC`,
+			[idUsuario]
+		);
+
+		if (result.rows.length === 0) {
+			const error = new Error("El carrito esta vacio. No se puede generar un pedido.");
+			error.statusCode = 400;
+			throw error;
+		}
+
+		let subtotal = 0;
+		let descuentoAplicado = 0;
+		let total = 0;
+		const items = [];
+		const itemsAfectados = [];
+
+		for (const row of result.rows) {
+			const esProducto = row.id_producto !== null;
+			const cantidad = Number(row.cantidad || 0);
+			const precioBase = esProducto ? Number(row.precio_producto || 0) : Number(row.precio_servicio || 0);
+			const descuento = {
+				id: esProducto ? row.id_descuento_producto : row.id_descuento_servicio,
+				codigo_cupon: esProducto ? row.codigo_cupon_producto : row.codigo_cupon_servicio,
+				porcentaje_descuento: esProducto ? row.porcentaje_producto : row.porcentaje_servicio,
+				fecha_inicio: esProducto ? row.inicio_producto : row.inicio_servicio,
+				fecha_fin: esProducto ? row.fin_producto : row.fin_servicio,
+			};
+
+			const descuentoVigente =
+				descuento.id !== null &&
+				descuento.fecha_inicio &&
+				descuento.fecha_fin &&
+				new Date() >= new Date(descuento.fecha_inicio) &&
+				new Date() <= new Date(descuento.fecha_fin);
+			const descuentoAutomatico =
+				descuentoVigente && (descuento.codigo_cupon === null || descuento.codigo_cupon === undefined);
+			const precioSinCupon = descuentoAutomatico
+				? calcularPrecioConPorcentaje(precioBase, descuento.porcentaje_descuento)
+				: Number(precioBase.toFixed(2));
+			const aplicaCupon =
+				cupon !== null &&
+				descuentoVigente &&
+				Number(descuento.id) === Number(cupon.id) &&
+				normalizarCodigoCupon(descuento.codigo_cupon) === codigoCupon;
+			const precioFinal = aplicaCupon
+				? calcularPrecioConPorcentaje(precioBase, cupon.porcentaje_descuento)
+				: precioSinCupon;
+			const subtotalItem = Number((precioSinCupon * cantidad).toFixed(2));
+			const totalItem = Number((precioFinal * cantidad).toFixed(2));
+			const descuentoItem = Number((subtotalItem - totalItem).toFixed(2));
+			const itemResumen = {
+				id_item: row.id_item,
+				tipo_item: esProducto ? "producto" : "servicio",
+				id_producto: row.id_producto,
+				id_servicio: row.id_servicio,
+				id_agenda_seleccionada: row.id_agenda_seleccionada,
+				nombre: esProducto ? row.nombre_producto : row.nombre_servicio,
+				cantidad,
+				precio_unitario_sin_cupon: precioSinCupon,
+				precio_unitario_final: precioFinal,
+				subtotal: subtotalItem,
+				total: totalItem,
+				descuento_cupon: descuentoItem,
+				cupon_aplicado: aplicaCupon,
+			};
+
+			subtotal += subtotalItem;
+			descuentoAplicado += descuentoItem;
+			total += totalItem;
+			items.push(itemResumen);
+
+			if (aplicaCupon) {
+				itemsAfectados.push(itemResumen);
+			}
+		}
+
+		if (cupon && itemsAfectados.length === 0) {
+			const error = new Error("El cupon no aplica a los productos o servicios del carrito");
+			error.statusCode = 409;
+			throw error;
+		}
+
+		return {
+			codigo_cupon: cupon ? cupon.codigo_cupon : null,
+			porcentaje_descuento: cupon ? Number(cupon.porcentaje_descuento) : null,
+			subtotal: Number(subtotal.toFixed(2)),
+			descuento_aplicado: Number(descuentoAplicado.toFixed(2)),
+			total: Number(total.toFixed(2)),
+			items,
+			items_afectados: itemsAfectados,
+		};
+	}
+
+	function construirCuponDetalleSnapshot(item, resumenCheckout) {
+		if (!item.cupon_aplicado || !resumenCheckout.codigo_cupon) return null;
+
+		return {
+			codigo_cupon: resumenCheckout.codigo_cupon,
+			porcentaje_descuento: resumenCheckout.porcentaje_descuento,
+			descuento_aplicado: item.descuento_cupon,
+			precio_sin_cupon: item.precio_unitario_sin_cupon,
+			precio_final: item.precio_unitario_final,
+			subtotal_sin_cupon: item.subtotal,
+			total_con_cupon: item.total,
+		};
+	}
+
+	async function aplicarPreciosCheckout(client, idPedido, resumenCheckout) {
+		for (const item of resumenCheckout.items) {
+			const cuponDetalle = construirCuponDetalleSnapshot(item, resumenCheckout);
+			const cuponDetalleJson = cuponDetalle ? JSON.stringify(cuponDetalle) : null;
+
+			if (item.tipo_item === "producto") {
+				await client.query(
+					`UPDATE detalle_pedido
+					 SET precio_unitario_historico = $1,
+					     snapshot_item = CASE
+						     WHEN $4::jsonb IS NULL THEN snapshot_item
+						     ELSE COALESCE(snapshot_item, '{}'::jsonb) || jsonb_build_object('cupon', $4::jsonb)
+					     END
+					 WHERE id_pedido = $2
+					   AND id_producto = $3`,
+					[item.precio_unitario_final, idPedido, item.id_producto, cuponDetalleJson]
+				);
+			} else {
+				await client.query(
+					`UPDATE detalle_pedido
+					 SET precio_unitario_historico = $1,
+					     snapshot_item = CASE
+						     WHEN $5::jsonb IS NULL THEN snapshot_item
+						     ELSE COALESCE(snapshot_item, '{}'::jsonb) || jsonb_build_object('cupon', $5::jsonb)
+					     END
+					 WHERE id_pedido = $2
+					   AND id_servicio = $3
+					   AND id_agenda_seleccionada = $4`,
+					[item.precio_unitario_final, idPedido, item.id_servicio, item.id_agenda_seleccionada, cuponDetalleJson]
+				);
+			}
+		}
+
+		await client.query(
+			`UPDATE pedidos
+			 SET total = $1
+			 WHERE id = $2`,
+			[resumenCheckout.total, idPedido]
+		);
 	}
 
 	// Crear carrito del usuario autenticado (si no existe)
@@ -345,6 +559,16 @@ function createCompradorCarritoRouter({ pool }) {
 					);
 				}
 			} else {
+				if (idAgenda === null) {
+					await client.query("ROLLBACK");
+					return res.status(400).json({ mensaje: "Selecciona un horario disponible para agendar este servicio" });
+				}
+
+				if (cantidadNum !== 1) {
+					await client.query("ROLLBACK");
+					return res.status(400).json({ mensaje: "Los servicios agendados solo pueden agregarse con cantidad 1" });
+				}
+
 				const servicio = await client.query(
 					"SELECT id FROM servicios WHERE id = $1 AND esta_activo = TRUE LIMIT 1",
 					[idServicio]
@@ -354,24 +578,40 @@ function createCompradorCarritoRouter({ pool }) {
 					return res.status(404).json({ mensaje: "Servicio no encontrado o inactivo" });
 				}
 
-				if (idAgenda !== null) {
-					if (!Number.isInteger(idAgenda) || idAgenda <= 0) {
-						await client.query("ROLLBACK");
-						return res.status(400).json({ mensaje: "id_agenda_seleccionada invalido" });
-					}
+				if (!Number.isInteger(idAgenda) || idAgenda <= 0) {
+					await client.query("ROLLBACK");
+					return res.status(400).json({ mensaje: "id_agenda_seleccionada invalido" });
+				}
 
-					const agenda = await client.query(
-						`SELECT id
-						 FROM agenda_servicios
-						 WHERE id = $1 AND id_servicio = $2 AND estado = 'disponible'
-						 LIMIT 1`,
-						[idAgenda, idServicio]
-					);
+				const agenda = await client.query(
+					`SELECT id
+					 FROM agenda_servicios
+					 WHERE id = $1
+					   AND id_servicio = $2
+					   AND estado = 'disponible'
+					   AND fecha_hora_inicio >= CURRENT_TIMESTAMP
+					 LIMIT 1`,
+					[idAgenda, idServicio]
+				);
 
-					if (agenda.rows.length === 0) {
-						await client.query("ROLLBACK");
-						return res.status(404).json({ mensaje: "Agenda no encontrada para este servicio" });
-					}
+				if (agenda.rows.length === 0) {
+					await client.query("ROLLBACK");
+					return res.status(404).json({ mensaje: "Horario no disponible para este servicio" });
+				}
+
+				const existente = await client.query(
+					`SELECT id
+					 FROM carrito_items
+					 WHERE id_carrito = $1
+					   AND id_servicio = $2
+					   AND id_agenda_seleccionada = $3
+					 LIMIT 1`,
+					[idCarrito, idServicio, idAgenda]
+				);
+
+				if (existente.rows.length > 0) {
+					await client.query("ROLLBACK");
+					return res.status(409).json({ mensaje: "Este horario ya esta en tu carrito" });
 				}
 
 				await client.query(
@@ -449,25 +689,31 @@ function createCompradorCarritoRouter({ pool }) {
 				}
 			}
 
+			if (item.rows[0].id_servicio !== null && cantidadNum !== 1) {
+				await client.query("ROLLBACK");
+				return res.status(400).json({ mensaje: "Los servicios agendados solo pueden tener cantidad 1" });
+			}
+
 			if (item.rows[0].id_servicio !== null && id_agenda_seleccionada !== undefined) {
-				if (idAgenda !== null && (!Number.isInteger(idAgenda) || idAgenda <= 0)) {
+				if (!Number.isInteger(idAgenda) || idAgenda <= 0) {
 					await client.query("ROLLBACK");
 					return res.status(400).json({ mensaje: "id_agenda_seleccionada invalido" });
 				}
 
-				if (idAgenda !== null) {
-					const agenda = await client.query(
-						`SELECT id
-						 FROM agenda_servicios
-						 WHERE id = $1 AND id_servicio = $2 AND estado = 'disponible'
-						 LIMIT 1`,
-						[idAgenda, item.rows[0].id_servicio]
-					);
+				const agenda = await client.query(
+					`SELECT id
+					 FROM agenda_servicios
+					 WHERE id = $1
+					   AND id_servicio = $2
+					   AND estado = 'disponible'
+					   AND fecha_hora_inicio >= CURRENT_TIMESTAMP
+					 LIMIT 1`,
+					[idAgenda, item.rows[0].id_servicio]
+				);
 
-					if (agenda.rows.length === 0) {
-						await client.query("ROLLBACK");
-						return res.status(404).json({ mensaje: "Agenda no encontrada para este servicio" });
-					}
+				if (agenda.rows.length === 0) {
+					await client.query("ROLLBACK");
+					return res.status(404).json({ mensaje: "Horario no disponible para este servicio" });
 				}
 
 				await client.query(
@@ -544,6 +790,44 @@ function createCompradorCarritoRouter({ pool }) {
 		}
 	});
 
+	// Valida y previsualiza un cupon contra el carrito actual.
+	router.post("/comprador/carrito/cupon", async (req, res) => {
+		const idUsuario = await requireActiveSession(req, res);
+		if (!idUsuario) return;
+
+		const codigoCupon = normalizarCodigoCupon(req.body?.codigo_cupon);
+		if (!codigoCupon) {
+			return res.status(400).json({ mensaje: "codigo_cupon es obligatorio" });
+		}
+
+		const client = await pool.connect();
+		try {
+			await obtenerOCrearCarrito(client, idUsuario);
+			const resumen = await calcularResumenCheckout(client, idUsuario, codigoCupon);
+			return res.status(200).json({
+				mensaje: "Cupon aplicado correctamente",
+				cupon: {
+					codigo_cupon: resumen.codigo_cupon,
+					porcentaje_descuento: resumen.porcentaje_descuento,
+				},
+				subtotal: resumen.subtotal,
+				descuento_aplicado: resumen.descuento_aplicado,
+				total: resumen.total,
+				items_afectados: resumen.items_afectados,
+			});
+		} catch (error) {
+			const statusCode = Number(error.statusCode || 500);
+			if (statusCode !== 500) {
+				return res.status(statusCode).json({ mensaje: error.message });
+			}
+
+			console.error(error);
+			return res.status(500).json({ mensaje: "Error al validar cupon" });
+		} finally {
+			client.release();
+		}
+	});
+
 	// Procesar compra/pedido desde el carrito
 	router.post("/comprador/carrito/checkout", async (req, res) => {
 		const idUsuario = await requireActiveSession(req, res);
@@ -557,6 +841,7 @@ function createCompradorCarritoRouter({ pool }) {
 			req.body?.id_metodo_pago !== undefined && req.body?.id_metodo_pago !== null
 				? Number(req.body.id_metodo_pago)
 				: null;
+		const codigoCupon = normalizarCodigoCupon(req.body?.codigo_cupon);
 
 		if (idDireccion !== null && (!Number.isInteger(idDireccion) || idDireccion <= 0)) {
 			return res.status(400).json({ mensaje: "id_direccion invalido" });
@@ -571,9 +856,53 @@ function createCompradorCarritoRouter({ pool }) {
 			await client.query("BEGIN");
 
 			await obtenerOCrearCarrito(client, idUsuario);
+			const resumenCheckout = await calcularResumenCheckout(client, idUsuario, codigoCupon);
 
 			const direccionSnapshot = await obtenerDireccionCheckout(client, idUsuario, idDireccion);
 			const metodoPagoSnapshot = await obtenerMetodoPagoCheckout(client, idUsuario, idMetodoPago);
+
+			const serviciosAgenda = await client.query(
+				`SELECT ci.id, ci.id_servicio, ci.id_agenda_seleccionada, s.nombre
+				 FROM carrito_items ci
+				 INNER JOIN carrito c ON c.id = ci.id_carrito
+				 INNER JOIN servicios s ON s.id = ci.id_servicio
+				 WHERE c.id_usuario = $1
+				   AND ci.id_servicio IS NOT NULL
+				 ORDER BY ci.id ASC`,
+				[idUsuario]
+			);
+
+			const agendaIds = [];
+			for (const item of serviciosAgenda.rows) {
+				if (!item.id_agenda_seleccionada) {
+					await client.query("ROLLBACK");
+					return res.status(400).json({
+						mensaje: `Selecciona un horario para el servicio ${item.nombre || item.id_servicio}`,
+					});
+				}
+
+				const agenda = await client.query(
+					`SELECT id, id_servicio, estado, fecha_hora_inicio
+					 FROM agenda_servicios
+					 WHERE id = $1
+					 FOR UPDATE`,
+					[item.id_agenda_seleccionada]
+				);
+
+				if (
+					agenda.rows.length === 0 ||
+					Number(agenda.rows[0].id_servicio) !== Number(item.id_servicio) ||
+					String(agenda.rows[0].estado || "").toLowerCase() !== "disponible" ||
+					new Date(agenda.rows[0].fecha_hora_inicio) < new Date()
+				) {
+					await client.query("ROLLBACK");
+					return res.status(409).json({
+						mensaje: `El horario seleccionado para ${item.nombre || "este servicio"} ya no esta disponible`,
+					});
+				}
+
+				agendaIds.push(Number(item.id_agenda_seleccionada));
+			}
 
 			const checkoutResult = await client.query(
 				"SELECT procesar_checkout($1, $2::jsonb, $3::jsonb) AS id_pedido",
@@ -581,6 +910,18 @@ function createCompradorCarritoRouter({ pool }) {
 			);
 
 			const idPedido = Number(checkoutResult.rows[0].id_pedido);
+			await aplicarPreciosCheckout(client, idPedido, resumenCheckout);
+
+			const agendaIdsUnicos = [...new Set(agendaIds)];
+			if (agendaIdsUnicos.length > 0) {
+				await client.query(
+					`UPDATE agenda_servicios
+					 SET estado = 'reservado',
+					     id_usuario_cliente = $1
+					 WHERE id = ANY($2::int[])`,
+					[idUsuario, agendaIdsUnicos]
+				);
+			}
 
 			const pedidoResult = await client.query(
 				`SELECT id, total, estado_pedido, fecha_pedido
@@ -602,13 +943,20 @@ function createCompradorCarritoRouter({ pool }) {
 			const pedido = pedidoResult.rows[0];
 			return res.status(201).json({
 				mensaje: "Pedido generado correctamente",
-				pedido: {
-					id: pedido.id,
-					total: Number(pedido.total),
-					estado_pedido: pedido.estado_pedido,
-					fecha_pedido: pedido.fecha_pedido,
-				},
-			});
+					pedido: {
+						id: pedido.id,
+						total: Number(pedido.total),
+						estado_pedido: pedido.estado_pedido,
+						fecha_pedido: pedido.fecha_pedido,
+					},
+					cupon: resumenCheckout.codigo_cupon
+						? {
+							codigo_cupon: resumenCheckout.codigo_cupon,
+							porcentaje_descuento: resumenCheckout.porcentaje_descuento,
+							descuento_aplicado: resumenCheckout.descuento_aplicado,
+						}
+						: null,
+				});
 		} catch (error) {
 			await client.query("ROLLBACK");
 			console.error(error);
@@ -620,6 +968,10 @@ function createCompradorCarritoRouter({ pool }) {
 
 				if (error.message.includes("Stock insuficiente")) {
 					return res.status(409).json({ mensaje: error.message });
+				}
+
+				if (error.statusCode && Number(error.statusCode) !== 500) {
+					return res.status(Number(error.statusCode)).json({ mensaje: error.message });
 				}
 			}
 

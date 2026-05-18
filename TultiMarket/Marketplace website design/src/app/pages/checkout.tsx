@@ -1,11 +1,12 @@
-import { useState } from "react";
-import { Link, useNavigate } from "react-router";
-import { CheckCircle, ShoppingCart, CreditCard, Check } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router";
+import { Calendar, CheckCircle, ShoppingCart, CreditCard, Check, Clock } from "lucide-react";
 import { useStore } from "../context/store-context";
 import { Navbar } from "../components/layout/navbar";
 import { Footer } from "../components/layout/footer";
-import { Order, mockDiscounts } from "../data/mock-data";
+import { Order } from "../data/mock-data";
 import { Tag, X } from "lucide-react";
+import { validarCuponCarritoApi, type CuponCarritoPreview } from "../api/api-client";
 
 export function CheckoutPage() {
   const { cart, getCartTotal, addresses, paymentMethods, placeOrder } = useStore();
@@ -14,13 +15,37 @@ export function CheckoutPage() {
   const [step, setStep] = useState<"confirm" | "success">("confirm");
   const [completedOrder, setCompletedOrder] = useState<Order | null>(null);
   const [couponCode, setCouponCode] = useState("");
-  const [appliedDiscount, setAppliedDiscount] = useState<{ code: string, percentage: number } | null>(null);
+  const [appliedCoupon, setAppliedCoupon] = useState<CuponCarritoPreview | null>(null);
+  const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const navigate = useNavigate();
-  
-  const subtotal = Number(getCartTotal()) || 0;
-  const discountAmount = appliedDiscount ? (subtotal * appliedDiscount.percentage) / 100 : 0;
-  const total = subtotal - discountAmount;
+  const cartSubtotal = Number(getCartTotal()) || 0;
+  const subtotal = appliedCoupon?.subtotal ?? cartSubtotal;
+  const discountAmount = appliedCoupon?.descuento_aplicado ?? 0;
+  const total = appliedCoupon?.total ?? subtotal;
+  const hasServiceWithoutAgenda = cart.some((item) => item.product.type === "servicio" && !item.agendaSlotId);
+  const hasMissingCheckoutData = !selectedAddress || !selectedPayment || addresses.length === 0 || paymentMethods.length === 0;
+
+  useEffect(() => {
+    if (addresses.length === 0) {
+      setSelectedAddress("");
+      return;
+    }
+
+    if (!selectedAddress || !addresses.some((addr) => addr.id === selectedAddress)) {
+      setSelectedAddress(addresses[0].id);
+    }
+  }, [addresses, selectedAddress]);
+
+  useEffect(() => {
+    if (paymentMethods.length === 0) {
+      setSelectedPayment("");
+      return;
+    }
+
+    if (!selectedPayment || !paymentMethods.some((pm) => pm.id === selectedPayment)) {
+      setSelectedPayment(paymentMethods[0].id);
+    }
+  }, [paymentMethods, selectedPayment]);
 
   if (cart.length === 0 && step !== "success") {
     return (
@@ -37,27 +62,45 @@ export function CheckoutPage() {
     );
   }
 
-  const handleApplyCoupon = () => {
-    const discount = mockDiscounts.find(d => d.code.toUpperCase() === couponCode.toUpperCase());
-    if (discount) {
-      setAppliedDiscount(discount);
+  const handleApplyCoupon = async () => {
+    const codigo = couponCode.trim().toUpperCase();
+    if (!codigo) {
+      alert("Escribe un codigo de cupon");
+      return;
+    }
+
+    setIsApplyingCoupon(true);
+    try {
+      const preview = await validarCuponCarritoApi(codigo);
+      setAppliedCoupon(preview);
       setCouponCode("");
-    } else {
-      alert("Codigo de cupon invalido");
+    } catch (error: any) {
+      setAppliedCoupon(null);
+      alert(error?.message || "Codigo de cupon invalido");
+    } finally {
+      setIsApplyingCoupon(false);
     }
   };
 
   const handleConfirmOrder = async () => {
     if (isProcessing) return;
+    if (hasServiceWithoutAgenda) {
+      alert("Hay servicios sin horario seleccionado. Elige un horario antes de confirmar.");
+      return;
+    }
+    if (hasMissingCheckoutData) {
+      alert("Selecciona una direccion de envio y un metodo de pago antes de confirmar.");
+      return;
+    }
     setIsProcessing(true);
     try {
       const addr = addresses.find((a) => a.id === selectedAddress);
       const addressStr = addr
         ? `${addr.street}, ${addr.city}, ${addr.state} ${addr.zip}, ${addr.country}`
-        : "Av. Reforma 123, CDMX, Mexico";
+        : "";
       const addrNumId = selectedAddress ? Number(selectedAddress) : undefined;
       const payNumId = selectedPayment ? Number(selectedPayment) : undefined;
-      const order = await placeOrder(addressStr, addrNumId, payNumId);
+      const order = await placeOrder(addressStr, addrNumId, payNumId, appliedCoupon?.cupon.codigo_cupon ?? null);
       // Enrich order with payment method info for receipt
       const pm = paymentMethods.find((m) => m.id === selectedPayment);
       if (pm) {
@@ -114,11 +157,17 @@ export function CheckoutPage() {
                 <h2 className="mb-4" style={{ fontSize: 20, fontWeight: 600 }}>Resumen del Pedido</h2>
                 <div className="space-y-4">
                   {cart.map((item) => (
-                    <div key={item.product.id} className="flex items-center gap-4 pb-4 border-b border-border last:border-0">
+                    <div key={item.cartKey ?? item.product.id} className="flex items-center gap-4 pb-4 border-b border-border last:border-0">
                       <img src={item.product.image} alt={item.product.name} className="w-16 h-16 rounded-lg object-cover" />
                       <div className="flex-1 min-w-0">
                         <p className="truncate" style={{ fontSize: 14, fontWeight: 500 }}>{item.product.name}</p>
                         <p className="text-muted-foreground" style={{ fontSize: 13 }}>Cant: {item.quantity}</p>
+                        {item.product.type === "servicio" && item.selectedDate && item.selectedTime && (
+                          <p className="text-primary flex items-center gap-1 mt-1" style={{ fontSize: 12 }}>
+                            <Calendar size={13} /> {item.selectedDate}
+                            <Clock size={13} className="ml-1" /> {item.selectedTime}{item.selectedEndTime ? ` - ${item.selectedEndTime}` : ""}
+                          </p>
+                        )}
                       </div>
                       <p style={{ fontSize: 15, fontWeight: 600 }}>${((Number(item.product.price) || 0) * item.quantity).toFixed(2)}</p>
                     </div>
@@ -217,10 +266,10 @@ export function CheckoutPage() {
                     <span className="text-muted-foreground">Subtotal</span>
                     <span>${subtotal.toFixed(2)}</span>
                   </div>
-                  {appliedDiscount && (
+                  {appliedCoupon && (
                     <div className="flex justify-between text-green-600">
                       <span className="flex items-center gap-1">
-                        <Tag size={14} /> Descuento ({appliedDiscount.code})
+                        <Tag size={14} /> Cupon ({appliedCoupon.cupon.codigo_cupon})
                       </span>
                       <span>-${discountAmount.toFixed(2)}</span>
                     </div>
@@ -232,30 +281,33 @@ export function CheckoutPage() {
                 </div>
 
                 {/* Coupon Input */}
-                {!appliedDiscount ? (
+                {!appliedCoupon ? (
                   <div className="mb-4">
                     <div className="flex gap-2">
                       <input
                         type="text"
                         placeholder="Codigo de cupon"
                         value={couponCode}
-                        onChange={(e) => setCouponCode(e.target.value)}
+                        onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
                         className="flex-1 px-3 py-2 border border-border rounded-lg outline-none focus:border-primary uppercase"
                         style={{ fontSize: 13 }}
                       />
                       <button 
                         onClick={handleApplyCoupon}
-                        className="px-4 py-2 bg-gray-100 border border-border rounded-lg hover:bg-gray-200"
+                        disabled={isApplyingCoupon}
+                        className="px-4 py-2 bg-gray-100 border border-border rounded-lg hover:bg-gray-200 disabled:opacity-50"
                         style={{ fontSize: 13, fontWeight: 600 }}
                       >
-                        Aplicar
+                        {isApplyingCoupon ? "..." : "Aplicar"}
                       </button>
                     </div>
                   </div>
                 ) : (
                   <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-2 flex items-center justify-between">
-                    <span className="text-green-700" style={{ fontSize: 12, fontWeight: 600 }}>CUPON APLICADO</span>
-                    <button onClick={() => setAppliedDiscount(null)} className="text-green-700">
+                    <span className="text-green-700" style={{ fontSize: 12, fontWeight: 600 }}>
+                      {appliedCoupon.cupon.codigo_cupon} aplicado a {appliedCoupon.items_afectados.length} item(s)
+                    </span>
+                    <button onClick={() => setAppliedCoupon(null)} className="text-green-700">
                         <X size={14} />
                     </button>
                   </div>
@@ -268,11 +320,21 @@ export function CheckoutPage() {
                 <p className="text-muted-foreground mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3" style={{ fontSize: 12 }}>
                   Este es un pedido simulado. No se procesara ningun pago real.
                 </p>
+                {hasServiceWithoutAgenda && (
+                  <p className="text-red-600 mb-4 bg-red-50 border border-red-200 rounded-lg p-3" style={{ fontSize: 12 }}>
+                    Hay servicios sin horario seleccionado.
+                  </p>
+                )}
+                {hasMissingCheckoutData && (
+                  <p className="text-red-600 mb-4 bg-red-50 border border-red-200 rounded-lg p-3" style={{ fontSize: 12 }}>
+                    Agrega y selecciona una direccion de envio y un metodo de pago.
+                  </p>
+                )}
                 <button
                   onClick={handleConfirmOrder}
-                  disabled={isProcessing}
+                  disabled={isProcessing || hasServiceWithoutAgenda || hasMissingCheckoutData}
                   className={`w-full text-white py-3.5 rounded-xl transition-colors ${
-                    isProcessing ? "bg-gray-400 cursor-not-allowed" : "bg-primary hover:bg-primary/90"
+                    isProcessing || hasServiceWithoutAgenda || hasMissingCheckoutData ? "bg-gray-400 cursor-not-allowed" : "bg-primary hover:bg-primary/90"
                   }`}
                   style={{ fontSize: 16, fontWeight: 600 }}
                 >
@@ -339,7 +401,14 @@ export function CheckoutPage() {
                               <td className="px-4 py-3">
                                 <div className="flex items-center gap-3">
                                   <img src={item.product.image} alt={item.product.name} className="w-10 h-10 rounded object-cover" />
-                                  <span className="truncate max-w-[200px]">{item.product.name}</span>
+                                  <div className="min-w-0">
+                                    <span className="truncate max-w-[200px] block">{item.product.name}</span>
+                                    {item.product.type === "servicio" && item.selectedDate && item.selectedTime && (
+                                      <span className="text-primary block mt-1" style={{ fontSize: 12 }}>
+                                        {item.selectedDate}, {item.selectedTime}{item.selectedEndTime ? ` - ${item.selectedEndTime}` : ""}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               </td>
                               <td className="text-center px-4 py-3">{item.quantity}</td>

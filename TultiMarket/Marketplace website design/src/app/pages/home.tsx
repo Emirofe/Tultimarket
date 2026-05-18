@@ -2,7 +2,15 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useSearchParams, Link } from "react-router";
 import { ChevronLeft, ChevronRight, SlidersHorizontal, X, Loader2 } from "lucide-react";
 import { type Product } from "../data/mock-data";
-import { getCategoriasApi, getAllProductosApi, getProductosPorCategoriaApi, getServiciosPorCategoriaApi } from "../api/api-client";
+import {
+  getCategoriasApi,
+  getAllProductosApi,
+  getProductosPorCategoriaApi,
+  getServiciosPorCategoriaApi,
+  getServiciosGlobalApi,
+  getProductosConDescuentoApi,
+  getServiciosConDescuentoApi,
+} from "../api/api-client";
 import { ProductCard } from "../components/product-card";
 import { Navbar } from "../components/layout/navbar";
 import { Footer } from "../components/layout/footer";
@@ -26,17 +34,52 @@ const bannerImages = [
 ];
 
 type CatItem = { id: string; name: string; tipo: string; id_padre: string | null };
+const DEFAULT_PRICE_RANGE: [number, number] = [0, 100000];
+
+function mapSortToApi(sortBy: string, hasSearch: boolean) {
+  if (sortBy === "precio-asc") return "precio_asc";
+  if (sortBy === "precio-desc") return "precio_desc";
+  if (sortBy === "nombre") return "nombre";
+  if (sortBy === "rating") return "mejor_calificados";
+  return hasSearch ? "relevancia" : "mejor_calificados";
+}
+
+function sortCatalogItems(items: Product[], sortBy: string) {
+  const sorted = [...items];
+  switch (sortBy) {
+    case "precio-asc":
+      sorted.sort((a, b) => a.price - b.price);
+      break;
+    case "precio-desc":
+      sorted.sort((a, b) => b.price - a.price);
+      break;
+    case "rating":
+      sorted.sort((a, b) => b.rating - a.rating || b.reviewCount - a.reviewCount);
+      break;
+    case "nombre":
+      sorted.sort((a, b) => a.name.localeCompare(b.name));
+      break;
+    default:
+      sorted.sort((a, b) => b.reviewCount - a.reviewCount || b.rating - a.rating);
+  }
+  return sorted;
+}
+
+function uniqueCatalogItems(items: Product[]) {
+  return Array.from(new Map(items.map((p) => [`${p.type}-${p.id}`, p])).values());
+}
 
 export function HomePage() {
   const [searchParams] = useSearchParams();
   const [currentBanner, setCurrentBanner] = useState(0);
   const [sortBy, setSortBy] = useState("relevancia");
-  const [priceRange, setPriceRange] = useState<[number, number]>([0, 2000]);
+  const [priceRange, setPriceRange] = useState<[number, number]>(DEFAULT_PRICE_RANGE);
   const [minRating, setMinRating] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
 
   // ─── Estado de datos ──────────────────────────────────────────────────────
   const [products, setProducts] = useState<Product[]>([]);
+  const [discountedItems, setDiscountedItems] = useState<Product[]>([]);
   const [allCategories, setAllCategories] = useState<CatItem[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
   const [isLoadingCategories, setIsLoadingCategories] = useState(true);
@@ -55,9 +98,11 @@ export function HomePage() {
       setSelectedLevel1(catFromUrl);
       setSelectedLevel2(null);
       setSelectedLevel3(null);
-    } else if (!catFromUrl && selectedLevel1 && searchParams.has("cat")) {
+    } else if (!catFromUrl && selectedLevel1) {
       // URL limpia → limpiar selección
       setSelectedLevel1(null);
+      setSelectedLevel2(null);
+      setSelectedLevel3(null);
     }
   }, [catFromUrl]);
 
@@ -73,6 +118,18 @@ export function HomePage() {
       })
       .catch(() => setAllCategories([]))
       .finally(() => setIsLoadingCategories(false));
+  }, []);
+
+  useEffect(() => {
+    Promise.all([
+      getProductosConDescuentoApi().catch(() => []),
+      getServiciosConDescuentoApi().catch(() => []),
+    ])
+      .then(([prods, servs]) => {
+        const unique = uniqueCatalogItems([...prods, ...servs]);
+        setDiscountedItems(sortCatalogItems(unique, "rating").slice(0, 4));
+      })
+      .catch(() => setDiscountedItems([]));
   }, []);
 
   // ─── Derivar los 3 niveles de la jerarquía ─────────────────────────────────
@@ -97,66 +154,43 @@ export function HomePage() {
 
     // Determinar qué categoría usar: la más específica seleccionada
     const activeCatId = selectedLevel3 ?? selectedLevel2 ?? selectedLevel1;
+    const q = searchFilter?.trim() || undefined;
+    const filtros = {
+      q,
+      precio_min: priceRange[0] > DEFAULT_PRICE_RANGE[0] ? priceRange[0] : undefined,
+      precio_max: priceRange[1] < DEFAULT_PRICE_RANGE[1] ? priceRange[1] : undefined,
+      calificacion_min: minRating > 0 ? minRating : undefined,
+      ordenar: mapSortToApi(sortBy, Boolean(q)),
+    };
 
     if (activeCatId) {
       const catId = Number(activeCatId);
       Promise.all([
-        getProductosPorCategoriaApi(catId).catch(() => []),
-        getServiciosPorCategoriaApi(catId).catch(() => []),
+        getProductosPorCategoriaApi(catId, filtros).catch(() => []),
+        getServiciosPorCategoriaApi(catId, filtros).catch(() => []),
       ])
         .then(([prods, servs]) => {
-          const all = [...prods, ...servs];
-          const unique = Array.from(new Map(all.map((p) => [`${p.type}-${p.id}`, p])).values());
-          setProducts(unique);
+          const unique = uniqueCatalogItems([...prods, ...servs]);
+          setProducts(sortCatalogItems(unique, sortBy));
         })
         .finally(() => setIsLoadingProducts(false));
     } else {
       // Sin categoría seleccionada: cargar todos los productos
-      getAllProductosApi()
-        .then((prods) => setProducts(prods))
+      Promise.all([
+        getAllProductosApi(filtros).catch(() => []),
+        getServiciosGlobalApi(filtros).catch(() => []),
+      ])
+        .then(([prods, servs]) => {
+          const unique = uniqueCatalogItems([...prods, ...servs]);
+          setProducts(sortCatalogItems(unique, sortBy));
+        })
         .catch(() => setProducts([]))
         .finally(() => setIsLoadingProducts(false));
     }
-  }, [selectedLevel1, selectedLevel2, selectedLevel3, isLoadingCategories]);
+  }, [selectedLevel1, selectedLevel2, selectedLevel3, isLoadingCategories, searchFilter, sortBy, priceRange, minRating]);
 
-  // ─── Filtrado y ordenado local ────────────────────────────────────────────
-  const filteredProducts = useMemo(() => {
-    let result = [...products];
-
-    if (searchFilter) {
-      const q = searchFilter.toLowerCase();
-      result = result.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.description.toLowerCase().includes(q)
-      );
-    }
-
-    result = result.filter(
-      (p) => p.price >= priceRange[0] && p.price <= priceRange[1]
-    );
-    if (minRating > 0) {
-      result = result.filter((p) => p.rating >= minRating);
-    }
-
-    switch (sortBy) {
-      case "precio-asc":
-        result.sort((a, b) => a.price - b.price);
-        break;
-      case "precio-desc":
-        result.sort((a, b) => b.price - a.price);
-        break;
-      case "rating":
-        result.sort((a, b) => b.rating - a.rating);
-        break;
-      case "nombre":
-        result.sort((a, b) => a.name.localeCompare(b.name));
-        break;
-      default:
-        result.sort((a, b) => b.reviewCount - a.reviewCount);
-    }
-    return result;
-  }, [products, searchFilter, sortBy, priceRange, minRating]);
+  // ─── Resultados ya filtrados por backend ──────────────────────────────────
+  const filteredProducts = products;
 
   const topRated = useMemo(
     () => [...products].sort((a, b) => b.rating - a.rating).slice(0, 4),
@@ -305,7 +339,25 @@ export function HomePage() {
         )}
       </section>
 
-      {/* Top rated — SOLO si hay productos en la BD */}
+      {/* Ofertas y mejor calificados */}
+      {!selectedLevel1 && !searchFilter && discountedItems.length > 0 && (
+        <section className="max-w-7xl mx-auto px-4 pb-8 w-full">
+          <div className="flex items-end justify-between gap-4 mb-6">
+            <div>
+              <h2 style={{ fontSize: 22, fontWeight: 600 }}>Ofertas</h2>
+              <p className="text-muted-foreground" style={{ fontSize: 14 }}>
+                Productos y servicios con descuentos activos
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {discountedItems.map((product) => (
+              <ProductCard key={`${product.type}-${product.id}`} product={product} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {!selectedLevel1 && !searchFilter && topRated.length > 0 && (
         <section className="max-w-7xl mx-auto px-4 pb-8 w-full">
           <h2 className="mb-6" style={{ fontSize: 22, fontWeight: 600 }}>
@@ -328,10 +380,10 @@ export function HomePage() {
                 ? activeCatName
                 : searchFilter
                   ? `Resultados para "${searchFilter}"`
-                  : "Todos los Productos"}
+                  : "Productos y Servicios"}
             </h2>
             <p className="text-muted-foreground" style={{ fontSize: 14 }}>
-              {filteredProducts.length} producto{filteredProducts.length !== 1 ? "s" : ""} encontrado{filteredProducts.length !== 1 ? "s" : ""}
+              {filteredProducts.length} articulo{filteredProducts.length !== 1 ? "s" : ""} encontrado{filteredProducts.length !== 1 ? "s" : ""}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -411,7 +463,7 @@ export function HomePage() {
               <div className="flex items-end">
                 <button
                   onClick={() => {
-                    setPriceRange([0, 2000]);
+                    setPriceRange(DEFAULT_PRICE_RANGE);
                     setMinRating(0);
                     setSortBy("relevancia");
                   }}
@@ -432,7 +484,7 @@ export function HomePage() {
         ) : filteredProducts.length === 0 ? (
           <div className="text-center py-20">
             <p className="text-muted-foreground" style={{ fontSize: 18 }}>
-              No hay productos en esta categoría
+              No hay productos o servicios en esta categoria
             </p>
           </div>
         ) : (

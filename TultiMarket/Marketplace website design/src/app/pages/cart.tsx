@@ -40,10 +40,10 @@ export function CartPage() {
             <div className="lg:col-span-2 space-y-4">
               {cart.map((item) => (
                 <div
-                  key={item.product.id}
+                  key={item.cartKey ?? item.product.id}
                   className="bg-white rounded-xl border border-border p-4 md:p-6 flex gap-4"
                 >
-                  <Link to={`/producto/${item.product.id}`} className="shrink-0">
+                  <Link to={`/producto/${item.product.id}${item.product.type === "servicio" ? "?type=servicio" : ""}`} className="shrink-0">
                     <img
                       src={item.product.image}
                       alt={item.product.name}
@@ -51,7 +51,7 @@ export function CartPage() {
                     />
                   </Link>
                   <div className="flex-1 min-w-0">
-                    <Link to={`/producto/${item.product.id}`} className="hover:text-primary transition-colors">
+                    <Link to={`/producto/${item.product.id}${item.product.type === "servicio" ? "?type=servicio" : ""}`} className="hover:text-primary transition-colors">
                       <h3 className="line-clamp-2" style={{ fontSize: 16, fontWeight: 500 }}>{item.product.name}</h3>
                     </Link>
                     <p className="text-muted-foreground mt-1" style={{ fontSize: 13 }}>
@@ -59,7 +59,7 @@ export function CartPage() {
                     </p>
                     {item.product.type === "servicio" && item.selectedDate && item.selectedTime && (
                       <div className="mt-2 text-primary bg-primary/5 px-2 py-1 rounded inline-block" style={{ fontSize: 12, fontWeight: 500 }}>
-                        Agendado para: {item.selectedDate} a las {item.selectedTime}
+                        Agendado para: {item.selectedDate}, {item.selectedTime}{item.selectedEndTime ? ` - ${item.selectedEndTime}` : ""}
                       </div>
                     )}
                     <p className="text-primary mt-2" style={{ fontSize: 18, fontWeight: 700 }}>
@@ -70,7 +70,7 @@ export function CartPage() {
                       {item.product.type !== "servicio" ? (
                         <div className="flex items-center border border-border rounded-lg">
                           <button
-                            onClick={() => updateCartQuantity(item.product.id, item.quantity - 1)}
+                            onClick={() => updateCartQuantity(item.cartKey ?? item.product.id, item.quantity - 1)}
                             className="p-2 hover:bg-gray-50 transition-colors"
                           >
                             <Minus size={16} />
@@ -85,7 +85,7 @@ export function CartPage() {
                                 toast.error(`Solo hay ${maxStock} unidades disponibles`);
                                 return;
                               }
-                              updateCartQuantity(item.product.id, item.quantity + 1);
+                              updateCartQuantity(item.cartKey ?? item.product.id, item.quantity + 1);
                             }}
                             className="p-2 hover:bg-gray-50 transition-colors"
                           >
@@ -93,8 +93,11 @@ export function CartPage() {
                           </button>
                         </div>
                       ) : (
-                        <div className="flex items-center text-muted-foreground" style={{ fontSize: 14 }}>
-                          Servicio (1)
+                        <div className="flex flex-col text-muted-foreground" style={{ fontSize: 14 }}>
+                          <span>Servicio agendado</span>
+                          <Link to={`/producto/${item.product.id}?type=servicio`} className="text-primary hover:underline" style={{ fontSize: 13 }}>
+                            Cambiar horario
+                          </Link>
                         </div>
                       )}
                       <div className="flex items-center gap-4">
@@ -102,7 +105,7 @@ export function CartPage() {
                           ${((Number(item.product.price) || 0) * (Number(item.quantity) || 0)).toFixed(2)}
                         </span>
                         <button
-                          onClick={() => removeFromCart(item.product.id)}
+                          onClick={() => removeFromCart(item.cartKey ?? item.product.id)}
                           className="text-red-500 hover:text-red-700 p-1 transition-colors"
                         >
                           <Trash2 size={18} />

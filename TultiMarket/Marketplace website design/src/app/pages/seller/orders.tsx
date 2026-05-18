@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChevronDown, ChevronUp, Calendar, Filter, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Calendar, Clock, Filter, Loader2, Tag } from "lucide-react";
 import { toast } from "sonner";
 import {
   getPedidosVendedorRawApi,
@@ -50,6 +50,17 @@ export function SellerOrdersPage() {
       case "CANCELADO": return "bg-red-100 text-red-700";
       default: return "bg-gray-100 text-gray-600";
     }
+  };
+
+  const formatAgendaDate = (value: string) =>
+    new Date(value).toLocaleDateString("es-MX", { month: "short", day: "numeric" });
+
+  const formatAgendaTime = (value: string) =>
+    new Date(value).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+
+  const getCoupons = (cupon: RawVendorOrder["cupon"]) => {
+    if (!cupon) return [];
+    return Array.isArray(cupon) ? cupon : [cupon];
   };
 
   if (isLoading) {
@@ -104,6 +115,12 @@ export function SellerOrdersPage() {
                 <div>
                   <p className="text-muted-foreground" style={{ fontSize: 13 }}>Total</p>
                   <p style={{ fontSize: 16, fontWeight: 600 }}>${(Number(order.total) || 0).toFixed(2)}</p>
+                  {getCoupons(order.cupon).length > 0 && (
+                    <p className="mt-1 inline-flex items-center gap-1 text-green-700" style={{ fontSize: 12, fontWeight: 500 }}>
+                      <Tag size={12} />
+                      {getCoupons(order.cupon).map((cupon) => cupon.codigo_cupon).join(", ")}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -125,11 +142,32 @@ export function SellerOrdersPage() {
                       <div className="flex-1">
                         <p style={{ fontSize: 14 }}>{item.name}</p>
                         <p className="text-muted-foreground" style={{ fontSize: 13 }}>Cant: {item.quantity} x ${(Number(item.price) || 0).toFixed(2)}</p>
+                        {item.type === "servicio" && item.agenda && (
+                          <p className="text-primary flex items-center gap-1 mt-1" style={{ fontSize: 12 }}>
+                            <Calendar size={13} /> {formatAgendaDate(item.agenda.fecha_inicio)}
+                            <Clock size={13} className="ml-1" /> {formatAgendaTime(item.agenda.fecha_inicio)} - {formatAgendaTime(item.agenda.fecha_fin)}
+                          </p>
+                        )}
                       </div>
                       <p style={{ fontSize: 14, fontWeight: 600 }}>${(Number(item.subtotal) || 0).toFixed(2)}</p>
                     </div>
                   ))}
                 </div>
+                {getCoupons(order.cupon).length > 0 && (
+                  <div className="mb-4 flex flex-wrap gap-2">
+                    {getCoupons(order.cupon).map((cupon) => (
+                      <div
+                        key={cupon.codigo_cupon}
+                        className="inline-flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-green-700"
+                        style={{ fontSize: 13, fontWeight: 500 }}
+                      >
+                        <Tag size={14} />
+                        <span>{cupon.codigo_cupon}</span>
+                        <span>-${Number(cupon.descuento_aplicado || 0).toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {order.buyerEmail && (
                   <p className="text-muted-foreground mb-2" style={{ fontSize: 14 }}>
                     Email: {order.buyerEmail}

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { Plus, Edit, Trash2, Eye, EyeOff, Search, Loader2, Tag, X } from "lucide-react";
+import { Link } from "react-router";
+import { CalendarDays, Plus, Edit, Trash2, Eye, EyeOff, Search, Loader2, Tag, X } from "lucide-react";
 import {
   getServiciosVendedorApi,
   createServicioVendedorApi,
@@ -9,11 +10,12 @@ import {
   createDescuentoServicioApi,
   updateDescuentoServicioApi,
   removeDescuentoServicioApi,
+  updateServicioCategoriasVendedorApi,
   type DescuentoPayload,
 } from "../../api/api-client";
 import { useStore } from "../../context/store-context";
 import { toast } from "sonner";
-import { DynamicCategoryField } from "../../components/dynamic-category-field";
+import { toImageUrl } from "../../api/mappers";
 
 interface ServiceFormData {
   name: string;
@@ -41,6 +43,8 @@ interface SellerService {
   codigo_cupon?: string | null;
   fecha_inicio_descuento?: string | null;
   fecha_fin_descuento?: string | null;
+  horarios_disponibles?: number;
+  proximo_horario?: string | null;
 }
 
 export function SellerServicesPage() {
@@ -77,6 +81,16 @@ export function SellerServicesPage() {
 
   const filtered = sellerServices.filter((s) => s.nombre.toLowerCase().includes(searchQuery.toLowerCase()));
 
+  const formatNextSchedule = (value?: string | null) => {
+    if (!value) return null;
+    return new Date(value).toLocaleString("es-MX", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!negocioId) { toast.error("No tienes un negocio asociado."); return; }
@@ -86,11 +100,11 @@ export function SellerServicesPage() {
     try {
       if (editingId) {
         await updateServicioVendedorApi(editingId, { nombre: formData.name, descripcion: formData.description || undefined, precio_base: parseFloat(formData.price), duracion_minutos: formData.duration ? parseInt(formData.duration) : undefined, imagenes: imagenesUrls.length > 0 ? imagenesUrls : undefined });
-        if (categoriasIds.length > 0) await fetch(`http://localhost:3000/api/vendedor/servicios/${editingId}/categorias`, { method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id_categorias: categoriasIds }) });
+        if (categoriasIds.length > 0) await updateServicioCategoriasVendedorApi(editingId, categoriasIds);
         toast.success("Servicio actualizado");
       } else {
         const result: any = await createServicioVendedorApi({ nombre: formData.name, descripcion: formData.description || undefined, precio_base: parseFloat(formData.price), duracion_minutos: formData.duration ? parseInt(formData.duration) : undefined, id_negocio: negocioId, imagenes: imagenesUrls });
-        if (categoriasIds.length > 0 && result?.id) await fetch(`http://localhost:3000/api/vendedor/servicios/${result.id}/categorias`, { method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id_categorias: categoriasIds }) });
+        if (categoriasIds.length > 0 && result?.id) await updateServicioCategoriasVendedorApi(result.id, categoriasIds);
         toast.success("Servicio creado");
       }
       closeForm();
@@ -182,8 +196,8 @@ export function SellerServicesPage() {
             <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>Precio Base (MXN)</label><input type="number" step="0.01" value={formData.price} onChange={(e) => setFormData(p => ({...p, price: e.target.value}))} className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} required /></div>
             <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>Duración (minutos)</label><input type="number" value={formData.duration} onChange={(e) => setFormData(p => ({...p, duration: e.target.value}))} className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} placeholder="Ej: 60" /></div>
             <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>Categoría</label><select value={formData.category} onChange={(e) => setFormData(p => ({...p, category: e.target.value}))} className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }}>{dbCategories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}</select></div>
-            <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>URL de Imagen (opcional)</label><input type="url" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://ejemplo.com/imagen.jpg" className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} /></div>
-            {imageUrl && (<div className="sm:col-span-2"><p className="text-muted-foreground mb-1" style={{ fontSize: 12 }}>Vista previa:</p><img src={imageUrl} alt="preview" className="h-24 rounded-lg object-cover border border-border" onError={(e) => (e.currentTarget.style.display = 'none')} /></div>)}
+            <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>URL de Imagen (opcional)</label><input type="text" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://ejemplo.com/imagen.jpg o /images/products/foto.jpg" className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} /></div>
+            {imageUrl && (<div className="sm:col-span-2"><p className="text-muted-foreground mb-1" style={{ fontSize: 12 }}>Vista previa:</p><img src={toImageUrl(imageUrl)} alt="preview" className="h-24 rounded-lg object-cover border border-border" /></div>)}
             <div className="sm:col-span-2 flex gap-2">
               <button type="submit" className="px-6 py-2.5 bg-primary text-white rounded-lg" style={{ fontSize: 14 }}>{editingId ? "Actualizar" : "Crear Servicio"}</button>
               <button type="button" onClick={closeForm} className="px-6 py-2.5 border border-border rounded-lg" style={{ fontSize: 14 }}>Cancelar</button>
@@ -203,6 +217,7 @@ export function SellerServicesPage() {
                   <th className="text-left px-4 py-3 text-muted-foreground" style={{ fontSize: 13, fontWeight: 500 }}>Servicio</th>
                   <th className="text-left px-4 py-3 text-muted-foreground" style={{ fontSize: 13, fontWeight: 500 }}>Precio Base</th>
                   <th className="text-left px-4 py-3 text-muted-foreground" style={{ fontSize: 13, fontWeight: 500 }}>Duración</th>
+                  <th className="text-left px-4 py-3 text-muted-foreground" style={{ fontSize: 13, fontWeight: 500 }}>Agenda</th>
                   <th className="text-left px-4 py-3 text-muted-foreground" style={{ fontSize: 13, fontWeight: 500 }}>Descuento</th>
                   <th className="text-left px-4 py-3 text-muted-foreground" style={{ fontSize: 13, fontWeight: 500 }}>Estado</th>
                   <th className="text-right px-4 py-3 text-muted-foreground" style={{ fontSize: 13, fontWeight: 500 }}>Acciones</th>
@@ -210,13 +225,30 @@ export function SellerServicesPage() {
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={6} className="text-center py-12 text-muted-foreground" style={{ fontSize: 14 }}>{searchQuery ? "No se encontraron servicios" : "No tienes servicios registrados"}</td></tr>
+                  <tr><td colSpan={7} className="text-center py-12 text-muted-foreground" style={{ fontSize: 14 }}>{searchQuery ? "No se encontraron servicios" : "No tienes servicios registrados"}</td></tr>
                 ) : (
                   filtered.map((service) => (
                     <tr key={service.id} className="border-b border-border last:border-0 hover:bg-gray-50/50">
-                      <td className="px-4 py-4"><span className="truncate max-w-[250px] block" style={{ fontSize: 14 }}>{service.nombre}</span></td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-3 min-w-[240px]">
+                          <img src={toImageUrl(service.imagen_principal)} alt={service.nombre} className="h-11 w-11 rounded-lg object-cover border border-border bg-gray-50" />
+                          <span className="truncate max-w-[250px] block" style={{ fontSize: 14 }}>{service.nombre}</span>
+                        </div>
+                      </td>
                       <td className="px-4 py-4" style={{ fontSize: 14 }}>${Number(service.precio_base).toFixed(2)}</td>
                       <td className="px-4 py-4 text-muted-foreground" style={{ fontSize: 14 }}>{service.duracion_minutos ? `${service.duracion_minutos} min` : "—"}</td>
+                      <td className="px-4 py-4">
+                        <Link to={`/vendedor/agenda?servicio=${service.id}`} className="inline-flex flex-col gap-1 hover:text-primary">
+                          <span className={`px-2 py-1 rounded w-fit ${(service.horarios_disponibles ?? 0) > 0 ? "bg-primary/10 text-primary" : "bg-amber-100 text-amber-700"}`} style={{ fontSize: 13 }}>
+                            {(service.horarios_disponibles ?? 0) > 0 ? `${service.horarios_disponibles} horarios` : "Sin horarios"}
+                          </span>
+                          {formatNextSchedule(service.proximo_horario) && (
+                            <span className="text-muted-foreground" style={{ fontSize: 12 }}>
+                              Prox. {formatNextSchedule(service.proximo_horario)}
+                            </span>
+                          )}
+                        </Link>
+                      </td>
                       <td className="px-4 py-4">
                         {service.id_descuento ? (
                           <span className="px-2 py-1 rounded bg-emerald-100 text-emerald-700" style={{ fontSize: 13 }}>
@@ -229,6 +261,7 @@ export function SellerServicesPage() {
                       <td className="px-4 py-4"><span className={`px-2 py-1 rounded ${service.esta_activo ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`} style={{ fontSize: 13 }}>{service.esta_activo ? "Activo" : "Inactivo"}</span></td>
                       <td className="px-4 py-4">
                         <div className="flex items-center justify-end gap-1">
+                          <Link to={`/vendedor/agenda?servicio=${service.id}`} className="p-2 text-muted-foreground hover:text-primary rounded-lg hover:bg-primary/5" title="Agenda"><CalendarDays size={16} /></Link>
                           <button onClick={() => openDiscountModal(service)} className="p-2 text-muted-foreground hover:text-emerald-600 rounded-lg hover:bg-emerald-50" title="Descuento"><Tag size={16} /></button>
                           <button onClick={() => handleEdit(service)} className="p-2 text-muted-foreground hover:text-primary rounded-lg hover:bg-primary/5"><Edit size={16} /></button>
                           <button onClick={() => toggleActive(service)} className="p-2 text-muted-foreground hover:text-amber-600 rounded-lg hover:bg-amber-50">{service.esta_activo ? <EyeOff size={16} /> : <Eye size={16} />}</button>
@@ -253,6 +286,9 @@ export function SellerServicesPage() {
               <button onClick={() => setDiscountService(null)} className="p-1 hover:bg-gray-100 rounded-lg"><X size={20} /></button>
             </div>
             <p className="text-muted-foreground mb-4" style={{ fontSize: 13 }}>Servicio: <span style={{ fontWeight: 600 }}>{discountService.nombre}</span></p>
+            <p className="text-muted-foreground mb-4" style={{ fontSize: 12 }}>
+              Si dejas el codigo vacio, el descuento se aplica automaticamente. Si escribes un codigo, el cliente debe usarlo en checkout.
+            </p>
             <form onSubmit={handleSaveDiscount} className="space-y-4">
               <div>
                 <label className="block mb-1.5 text-muted-foreground" style={{ fontSize: 13 }}>Porcentaje de descuento</label>

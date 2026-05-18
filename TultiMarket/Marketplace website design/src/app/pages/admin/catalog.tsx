@@ -81,7 +81,7 @@ export function AdminCatalogPage() {
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 600 }}>Gestión de Catálogo</h1>
           <p className="text-muted-foreground mt-1" style={{ fontSize: 14 }}>
-            Revisa y aprueba productos o servicios subidos por los vendedores (RF-44, RF-46)
+            En este apartado tienes el control de todo lo que se ofrece, permitiéndote filtrar por estado, buscar artículos específicos y decidir qué productos se quedan o se van con solo un clic.
           </p>
         </div>
       </div>
@@ -137,9 +137,8 @@ export function AdminCatalogPage() {
                     )}
                   </td>
                   <td className="px-6 py-4">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
-                      p.estado_catalogo === "Aprobado" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
-                    }`}>{p.estado_catalogo}</span>
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${p.estado_catalogo === "Aprobado" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                      }`}>{p.estado_catalogo}</span>
                   </td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">

@@ -73,6 +73,8 @@ function createCompradorReportesRouter({ pool }) {
 		if (!idUsuario) return;
 
 		const { id_producto, id_servicio, motivo, descripcion } = req.body;
+		const motivoFinal = String(motivo || "").trim();
+		const descripcionFinal = String(descripcion || "").trim();
 		const productoId = Number(id_producto);
 		const servicioId = Number(id_servicio);
 		const tieneProducto = Number.isInteger(productoId) && productoId > 0;
@@ -84,9 +86,15 @@ function createCompradorReportesRouter({ pool }) {
 			});
 		}
 
-		if (!motivo || !descripcion) {
+		if (!motivoFinal || !descripcionFinal) {
 			return res.status(400).json({
 				mensaje: "Motivo y descripcion son obligatorios",
+			});
+		}
+
+		if (descripcionFinal.length < 10) {
+			return res.status(400).json({
+				mensaje: "La descripcion debe tener al menos 10 caracteres",
 			});
 		}
 
@@ -129,8 +137,8 @@ function createCompradorReportesRouter({ pool }) {
 					idNegocio,
 					tieneProducto ? productoId : null,
 					tieneServicio ? servicioId : null,
-					String(motivo).trim(),
-					String(descripcion).trim(),
+					motivoFinal,
+					descripcionFinal,
 				]
 			);
 

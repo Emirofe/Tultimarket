@@ -247,7 +247,7 @@ export function ServiceForm({
         </div>
         <div>
           <label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>
-            Ubicacion
+            Ubicación
           </label>
           <input
             value={formData.location}
@@ -289,7 +289,7 @@ export function ServiceForm({
             >
               <Upload size={24} className="mx-auto text-muted-foreground mb-2" />
               <p className="text-muted-foreground" style={{ fontSize: 13 }}>
-                Arrastra imagenes aqui o haz clic para seleccionar
+                Arrastra imágenes aquí o haz clic para seleccionar
               </p>
               <p className="text-muted-foreground" style={{ fontSize: 12 }}>
                 JPG, PNG, GIF, WebP. Se comprimen automaticamente si superan 2MB.

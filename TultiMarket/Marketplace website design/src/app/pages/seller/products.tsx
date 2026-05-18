@@ -9,11 +9,12 @@ import {
   createDescuentoProductoApi,
   updateDescuentoProductoApi,
   removeDescuentoProductoApi,
+  updateProductoCategoriasVendedorApi,
   type DescuentoPayload,
 } from "../../api/api-client";
 import { useStore } from "../../context/store-context";
 import { toast } from "sonner";
-import { DynamicCategoryField } from "../../components/dynamic-category-field";
+import { toImageUrl } from "../../api/mappers";
 
 interface ProductFormData {
   name: string;
@@ -50,7 +51,7 @@ export function SellerProductsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [formData, setFormData] = useState<ProductFormData>({ name: "", description: "", price: "", stock: "", category: "" });
+  const [formData, setFormData] = useState<ProductFormData>({ name: "", description: "", price: "", stock: "", category: "", sku: "" });
   const [imageUrl, setImageUrl] = useState("");
   const [dbCategories, setDbCategories] = useState<{ id: string; name: string; tipo?: string }[]>([]);
 
@@ -85,12 +86,12 @@ export function SellerProductsPage() {
     const categoriasIds = !isNaN(catId) && catId > 0 ? [catId] : [];
     try {
       if (editingId) {
-        await updateProductoVendedorApi(editingId, { nombre: formData.name, descripcion: formData.description || undefined, precio: parseFloat(formData.price), stock_total: formData.stock ? parseInt(formData.stock) : undefined, imagenes: imagenesUrls.length > 0 ? imagenesUrls : undefined });
-        if (categoriasIds.length > 0) await fetch(`http://localhost:3000/api/vendedor/productos/${editingId}/categorias`, { method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id_categorias: categoriasIds }) });
+        await updateProductoVendedorApi(editingId, { nombre: formData.name, descripcion: formData.description || undefined, precio: parseFloat(formData.price), sku: formData.sku.trim() || undefined, stock_total: formData.stock ? parseInt(formData.stock) : undefined, imagenes: imagenesUrls.length > 0 ? imagenesUrls : undefined });
+        if (categoriasIds.length > 0) await updateProductoCategoriasVendedorApi(editingId, categoriasIds);
         toast.success("Producto actualizado");
       } else {
-        const result: any = await createProductoVendedorApi({ nombre: formData.name, descripcion: formData.description || undefined, precio: parseFloat(formData.price), id_negocio: negocioId, stock_total: formData.stock ? parseInt(formData.stock) : 0, imagenes: imagenesUrls });
-        if (categoriasIds.length > 0 && result?.id) await fetch(`http://localhost:3000/api/vendedor/productos/${result.id}/categorias`, { method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id_categorias: categoriasIds }) });
+        const result: any = await createProductoVendedorApi({ nombre: formData.name, descripcion: formData.description || undefined, precio: parseFloat(formData.price), id_negocio: negocioId, sku: formData.sku.trim() || undefined, stock_total: formData.stock ? parseInt(formData.stock) : 0, imagenes: imagenesUrls });
+        if (categoriasIds.length > 0 && result?.id) await updateProductoCategoriasVendedorApi(result.id, categoriasIds);
         toast.success("Producto creado");
       }
       closeForm();
@@ -98,8 +99,8 @@ export function SellerProductsPage() {
     } catch (error) { toast.error(error instanceof Error ? error.message : "Error al guardar producto"); }
   };
 
-  const handleEdit = (p: SellerProduct) => { setEditingId(p.id); setFormData({ name: p.nombre, description: p.descripcion ?? "", price: String(p.precio), stock: String(p.stock_total), category: p.id_categoria ? String(p.id_categoria) : (dbCategories[0]?.id || "") }); setImageUrl(p.imagen_principal || ""); setShowForm(true); };
-  const closeForm = () => { setShowForm(false); setEditingId(null); setFormData({ name: "", description: "", price: "", stock: "", category: dbCategories[0]?.id || "" }); setImageUrl(""); };
+  const handleEdit = (p: SellerProduct) => { setEditingId(p.id); setFormData({ name: p.nombre, description: p.descripcion ?? "", price: String(p.precio), stock: String(p.stock_total), category: p.id_categoria ? String(p.id_categoria) : (dbCategories[0]?.id || ""), sku: p.sku ?? "" }); setImageUrl(p.imagen_principal || ""); setShowForm(true); };
+  const closeForm = () => { setShowForm(false); setEditingId(null); setFormData({ name: "", description: "", price: "", stock: "", category: dbCategories[0]?.id || "", sku: "" }); setImageUrl(""); };
 
   const toggleActive = async (p: SellerProduct) => {
     if (!negocioId) return;
@@ -165,7 +166,7 @@ export function SellerProductsPage() {
     <div>
       <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
         <h1 style={{ fontSize: 24, fontWeight: 600 }}>Mis Productos</h1>
-        <button onClick={() => { setShowForm(true); setEditingId(null); setFormData({ name: "", description: "", price: "", stock: "", category: dbCategories[0]?.id || "" }); setImageUrl(""); }} className="flex items-center gap-2 bg-primary text-white px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors" style={{ fontSize: 14 }}><Plus size={18} /> Nuevo Producto</button>
+        <button onClick={() => { setShowForm(true); setEditingId(null); setFormData({ name: "", description: "", price: "", stock: "", category: dbCategories[0]?.id || "", sku: "" }); setImageUrl(""); }} className="flex items-center gap-2 bg-primary text-white px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors" style={{ fontSize: 14 }}><Plus size={18} /> Nuevo Producto</button>
       </div>
 
       <div className="relative mb-6">
@@ -179,11 +180,12 @@ export function SellerProductsPage() {
           <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2"><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>Nombre del producto</label><input value={formData.name} onChange={(e) => setFormData(p => ({...p, name: e.target.value}))} className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} required /></div>
             <div className="sm:col-span-2"><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>Descripcion</label><textarea value={formData.description} onChange={(e) => setFormData(p => ({...p, description: e.target.value}))} rows={3} className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} /></div>
+            <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>SKU</label><input value={formData.sku} onChange={(e) => setFormData(p => ({...p, sku: e.target.value}))} placeholder="Ej: PROD-001" className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} /></div>
             <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>Precio (MXN)</label><input type="number" step="0.01" value={formData.price} onChange={(e) => setFormData(p => ({...p, price: e.target.value}))} className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} required /></div>
             <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>Stock</label><input type="number" value={formData.stock} onChange={(e) => setFormData(p => ({...p, stock: e.target.value}))} className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} required /></div>
             <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>Categoría</label><select value={formData.category} onChange={(e) => setFormData(p => ({...p, category: e.target.value}))} className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }}>{dbCategories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}</select></div>
-            <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>URL de Imagen (opcional)</label><input type="url" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://ejemplo.com/imagen.jpg" className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} /></div>
-            {imageUrl && (<div className="sm:col-span-2"><p className="text-muted-foreground mb-1" style={{ fontSize: 12 }}>Vista previa:</p><img src={imageUrl} alt="preview" className="h-24 rounded-lg object-cover border border-border" onError={(e) => (e.currentTarget.style.display = 'none')} /></div>)}
+            <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>URL de Imagen (opcional)</label><input type="text" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://ejemplo.com/imagen.jpg o /images/products/foto.jpg" className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} /></div>
+            {imageUrl && (<div className="sm:col-span-2"><p className="text-muted-foreground mb-1" style={{ fontSize: 12 }}>Vista previa:</p><img src={toImageUrl(imageUrl)} alt="preview" className="h-24 rounded-lg object-cover border border-border" /></div>)}
             <div className="sm:col-span-2 flex gap-2">
               <button type="submit" className="px-6 py-2.5 bg-primary text-white rounded-lg" style={{ fontSize: 14 }}>{editingId ? "Actualizar" : "Crear Producto"}</button>
               <button type="button" onClick={closeForm} className="px-6 py-2.5 border border-border rounded-lg" style={{ fontSize: 14 }}>Cancelar</button>
@@ -214,7 +216,15 @@ export function SellerProductsPage() {
                 ) : (
                   filtered.map((product) => (
                     <tr key={product.id} className="border-b border-border last:border-0 hover:bg-gray-50/50">
-                      <td className="px-4 py-4"><span className="truncate max-w-[250px] block" style={{ fontSize: 14 }}>{product.nombre}</span></td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-3 min-w-[240px]">
+                          <img src={toImageUrl(product.imagen_principal)} alt={product.nombre} className="h-11 w-11 rounded-lg object-cover border border-border bg-gray-50" />
+                          <div className="min-w-0">
+                            <span className="truncate max-w-[250px] block" style={{ fontSize: 14 }}>{product.nombre}</span>
+                            <span className="truncate max-w-[250px] block text-muted-foreground" style={{ fontSize: 12 }}>{product.sku || "Sin SKU"}</span>
+                          </div>
+                        </div>
+                      </td>
                       <td className="px-4 py-4" style={{ fontSize: 14 }}>${Number(product.precio).toFixed(2)}</td>
                       <td className="px-4 py-4"><span className={`px-2 py-1 rounded ${product.stock_total === 0 ? "bg-red-100 text-red-700" : product.stock_total < 10 ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700"}`} style={{ fontSize: 13 }}>{product.stock_total}</span></td>
                       <td className="px-4 py-4">
@@ -253,6 +263,9 @@ export function SellerProductsPage() {
               <button onClick={() => setDiscountProduct(null)} className="p-1 hover:bg-gray-100 rounded-lg"><X size={20} /></button>
             </div>
             <p className="text-muted-foreground mb-4" style={{ fontSize: 13 }}>Producto: <span style={{ fontWeight: 600 }}>{discountProduct.nombre}</span></p>
+            <p className="text-muted-foreground mb-4" style={{ fontSize: 12 }}>
+              Si dejas el codigo vacio, el descuento se aplica automaticamente. Si escribes un codigo, el cliente debe usarlo en checkout.
+            </p>
             <form onSubmit={handleSaveDiscount} className="space-y-4">
               <div>
                 <label className="block mb-1.5 text-muted-foreground" style={{ fontSize: 13 }}>Porcentaje de descuento</label>

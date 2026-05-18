@@ -28,6 +28,16 @@ export interface Product {
   // Campos para descuentos reales de BD
   originalPrice?: number;
   discountPercent?: number;
+  agendaSlots?: ServiceAgendaSlot[];
+}
+
+export interface ServiceAgendaSlot {
+  id: string;
+  start: string;
+  end: string;
+  status: string;
+  branchName?: string;
+  branchAddress?: string;
 }
 
 export interface Review {
@@ -44,8 +54,17 @@ export interface CartItem {
   product: Product;
   quantity: number;
   // Campos para servicios
+  agendaSlotId?: string;
   selectedDate?: string;
   selectedTime?: string;
+  selectedEndTime?: string;
+}
+
+export interface OrderCoupon {
+  codigo_cupon: string;
+  porcentaje_descuento: number;
+  descuento_aplicado: number;
+  items_afectados?: number;
 }
 
 export interface Order {
@@ -59,6 +78,7 @@ export interface Order {
   buyerId: string;
   address: string;
   paymentMethod?: string;
+  cupon?: OrderCoupon | OrderCoupon[] | null;
 }
 
 export interface User {

@@ -164,9 +164,9 @@ export function AdminUsersPage() {
       {showDeleteModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full">
-            <h3 className="mb-2" style={{ fontSize: 18, fontWeight: 600 }}>Confirmar Eliminacion</h3>
+            <h3 className="mb-2" style={{ fontSize: 18, fontWeight: 600 }}>Confirmar Eliminación</h3>
             <p className="text-muted-foreground mb-6" style={{ fontSize: 14 }}>
-              Esta accion desactivará al usuario permanentemente.
+              Esta acción desactivará al usuario permanentemente.
             </p>
             <div className="flex gap-3">
               <button onClick={() => setShowDeleteModal(null)}

@@ -16,6 +16,7 @@ import type {
   Address,
   PaymentMethod,
   Order,
+  OrderCoupon,
 } from "../data/mock-data";
 
 // ─── URL base del servidor de backend ────────────────────────────────────────
@@ -27,7 +28,8 @@ const API_BASE = `http://${API_HOST}:3000`;
 export function toImageUrl(path: string | null | undefined): string {
   if (!path) return "https://placehold.co/400x400?text=Sin+imagen";
   if (path.startsWith("http")) return path;
-  return `${API_BASE}${path}`;
+  const normalized = path.replace(/\\/g, "/").replace(/^static\//, "");
+  return `${API_BASE}${normalized.startsWith("/") ? normalized : `/${normalized}`}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,9 +84,14 @@ export interface RawProductoLista {
   nombre: string;
   calificacion: number | null;
   precio: number;
+  precio_original?: number | null;
+  porcentaje_descuento?: number | null;
   imagen_principal: string | null;
   empresa: string;
   numero_resenas: number;
+  horarios_disponibles?: number | null;
+  proximo_horario_inicio?: string | null;
+  proximo_horario_fin?: string | null;
 }
 
 /** Lo que devuelve GET /comprador/servicios/:id → .servicio */
@@ -94,6 +101,8 @@ export interface RawServicioDetalle {
   descripcion: string | null;
   calificacion: number | null;
   precio: number;              // ya mapeado como precio_base en el back
+  precio_original?: number | null;
+  porcentaje_descuento?: number | null;
   duracion_minutos: number | null;
   fecha_registro: string;
   imagen_principal: string | null;
@@ -111,6 +120,16 @@ export interface RawAgendaSlot {
   fecha_hora_inicio: string;
   fecha_hora_fin: string;
   estado: string;
+  sucursal?: {
+    nombre?: string | null;
+    direccion?: {
+      calle?: string | null;
+      ciudad?: string | null;
+      estado?: string | null;
+      codigo_postal?: string | null;
+      pais?: string | null;
+    };
+  };
 }
 
 /** Lo que devuelve GET /comprador/categorias → [] */
@@ -172,6 +191,7 @@ export interface RawPedido {
   total: number;
   status: string;
   address: Record<string, unknown>;
+  cupon?: OrderCoupon | OrderCoupon[] | null;
   items: RawPedidoItem[];
 }
 
@@ -206,9 +226,16 @@ function mapImageGallery(
 
 /** Formatea la dirección de la sucursal como string legible */
 function formatBranchAddress(sucursal?: RawProductoDetalle["sucursal"]): string {
-  if (!sucursal) return "Ubicacion no disponible";
+  if (!sucursal) return "Ubicación no disponible";
   const parts = [sucursal.calle, sucursal.ciudad, sucursal.estado, sucursal.codigo_postal, sucursal.pais].filter(Boolean);
-  return parts.length > 0 ? parts.join(", ") : "Ubicacion no disponible";
+  return parts.length > 0 ? parts.join(", ") : "Ubicación no disponible";
+}
+
+function formatAgendaAddress(slot: RawAgendaSlot): string | undefined {
+  const direccion = slot.sucursal?.direccion;
+  if (!direccion) return undefined;
+  const parts = [direccion.calle, direccion.ciudad, direccion.estado, direccion.codigo_postal, direccion.pais].filter(Boolean);
+  return parts.length > 0 ? parts.join(", ") : undefined;
 }
 
 /** Convierte el detalle completo de un PRODUCTO del back al tipo Product del front */
@@ -219,8 +246,14 @@ export function mapProductoDetalle(raw: RawProductoDetalle): Product {
     name: raw.nombre,
     description: raw.descripcion ?? "",
     price: Number(raw.precio),
-    originalPrice: raw.precio_original != null ? Number(raw.precio_original) : undefined,
-    discountPercent: raw.porcentaje_descuento != null ? Number(raw.porcentaje_descuento) : undefined,
+    originalPrice:
+      raw.precio_original != null && Number(raw.precio_original) !== Number(raw.precio)
+        ? Number(raw.precio_original)
+        : undefined,
+    discountPercent:
+      raw.porcentaje_descuento != null && Number(raw.porcentaje_descuento) > 0
+        ? Number(raw.porcentaje_descuento)
+        : undefined,
     image: images[0],
     images,
     category: raw.categorias[0] ?? "general",
@@ -244,11 +277,25 @@ export function mapProductoDetalle(raw: RawProductoDetalle): Product {
 
 /** Convierte un producto de la LISTA (catálogo) del back al tipo Product del front */
 export function mapProductoLista(raw: RawProductoLista): Product {
+  const price = Number(raw.precio);
+  const originalPrice =
+    raw.precio_original != null && Number(raw.precio_original) > price
+      ? Number(raw.precio_original)
+      : undefined;
+  const discountPercent =
+    raw.porcentaje_descuento != null && Number(raw.porcentaje_descuento) > 0
+      ? Number(raw.porcentaje_descuento)
+      : undefined;
+  const horariosDisponibles =
+    raw.horarios_disponibles != null ? Number(raw.horarios_disponibles) : undefined;
+
   return {
     id: String(raw.id),
     name: raw.nombre,
     description: "",           // la lista no trae descripción
-    price: Number(raw.precio),
+    price,
+    originalPrice,
+    discountPercent,
     image: toImageUrl(raw.imagen_principal),
     images: [toImageUrl(raw.imagen_principal)],
     category: "general",       // la lista no trae categoría individual
@@ -259,6 +306,12 @@ export function mapProductoLista(raw: RawProductoLista): Product {
     sellerName: raw.empresa,
     reviews: [],
     type: "producto",
+    availability:
+      horariosDisponibles !== undefined
+        ? horariosDisponibles > 0
+          ? `${horariosDisponibles} horario${horariosDisponibles !== 1 ? "s" : ""} disponible${horariosDisponibles !== 1 ? "s" : ""}`
+          : "Sin horarios disponibles"
+        : undefined,
     status: "Aprobado",
   };
 }
@@ -271,6 +324,14 @@ export function mapServicioDetalle(raw: RawServicioDetalle): Product {
     name: raw.nombre,
     description: raw.descripcion ?? "",
     price: Number(raw.precio),
+    originalPrice:
+      raw.precio_original != null && Number(raw.precio_original) > Number(raw.precio)
+        ? Number(raw.precio_original)
+        : undefined,
+    discountPercent:
+      raw.porcentaje_descuento != null && Number(raw.porcentaje_descuento) > 0
+        ? Number(raw.porcentaje_descuento)
+        : undefined,
     image: images[0],
     images,
     category: raw.categorias[0] ?? "general",
@@ -285,6 +346,14 @@ export function mapServicioDetalle(raw: RawServicioDetalle): Product {
     availability: raw.agenda_disponible.length > 0
       ? `${raw.agenda_disponible.length} horarios disponibles`
       : "Sin horarios disponibles",
+    agendaSlots: raw.agenda_disponible.map((slot) => ({
+      id: String(slot.id),
+      start: slot.fecha_hora_inicio,
+      end: slot.fecha_hora_fin,
+      status: slot.estado,
+      branchName: slot.sucursal?.nombre ?? raw.empresa,
+      branchAddress: formatAgendaAddress(slot),
+    })),
     status: "Aprobado",
     publicationDate: raw.fecha_registro
       ? new Date(raw.fecha_registro).toISOString().split("T")[0]
@@ -294,11 +363,14 @@ export function mapServicioDetalle(raw: RawServicioDetalle): Product {
 
 /** Convierte un usuario del back al tipo User del frontend */
 export function mapUsuario(raw: RawUsuario): User {
+  const rol = String(raw.rol || "").toLowerCase();
+  const role = rol === "cliente" ? "comprador" : rol;
+
   return {
     id: String(raw.id),
     name: raw.nombre,
     email: raw.email,
-    role: raw.rol,
+    role: role as User["role"],
     registrationDate: new Date().toISOString().split("T")[0], // el back no retorna esto en /login
     status: "Activo",
     phone: raw.telefono ?? undefined,
@@ -391,6 +463,7 @@ export function mapPedidoVendedor(raw: RawPedido): Order {
     address: typeof raw.address === "object"
       ? Object.values(raw.address).filter(Boolean).join(", ")
       : String(raw.address),
+    cupon: raw.cupon ?? null,
   };
 }
 

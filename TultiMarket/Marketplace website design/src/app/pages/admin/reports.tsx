@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Flag, AlertTriangle, CheckCircle, Clock, Filter, ChevronDown, ChevronUp, ShieldOff, Trash2, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -38,33 +38,21 @@ export function AdminReportsPage() {
   const [expandedReport, setExpandedReport] = useState<number | null>(null);
 
   // ── Carga real desde el backend ───────────────────────────────────────────
-  useEffect(() => {
-    let cancelled = false;
+  const loadReports = useCallback(async () => {
     setLoading(true);
-    getReportesAdminApi()
-      .then((data) => {
-        if (!cancelled) setReports(data as ReporteFront[]);
-      })
-      .catch((err) => {
-        if (!cancelled) toast.error(err.message || "Error al cargar reportes");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
+    try {
+      const data = await getReportesAdminApi();
+      setReports(data as ReporteFront[]);
+    } catch (err: any) {
+      toast.error(err.message || "Error al cargar reportes");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const reportStatuses = [
-    "all",
-    "Pendiente",
-    "Revisado",
-    "Advertencia formal",
-    "Suspensión temporal",
-    "Bloqueo permanente",
-    "Desestimado",
-    "Contenido eliminado",
-    "Resuelto",
-  ];
+  useEffect(() => {
+    loadReports();
+  }, [loadReports]);
 
   const filtered = statusFilter === "all"
     ? reports
@@ -110,30 +98,32 @@ export function AdminReportsPage() {
   const handleAction = async (report: ReporteFront, newStatus: string) => {
     try {
       const id = report.id;
+      const vendedorReportado = report.usuario_reportado?.nombre
+        ? `${report.usuario_reportado.nombre} (#${report.id_usuario_reportado ?? report.usuario_reportado.id})`
+        : `vendedor del negocio #${report.id_negocio}`;
+
       switch (newStatus) {
         case "Advertencia formal":
+          if (!window.confirm(`La advertencia se registrara contra ${vendedorReportado}, no contra el comprador que reporto. ¿Continuar?`)) return;
           await advertenciaReporteApi(id);
           break;
         case "Suspensión temporal": {
-          const diasInput = window.prompt("\u00bfCu\u00e1ntos d\u00edas de suspensi\u00f3n?", "7");
-          if (!diasInput) return;
-          const dias = parseInt(diasInput, 10);
-          if (isNaN(dias) || dias <= 0) { toast.error("N\u00famero de d\u00edas inv\u00e1lido"); return; }
-          await suspensionReporteApi(id, dias);
+          if (!window.confirm(`¿Confirmas la suspension temporal de ${vendedorReportado}? La cuenta quedara inactiva hasta que un administrador la reactive.`)) return;
+          await suspensionReporteApi(id);
           break;
         }
         case "Bloqueo permanente":
-          if (!window.confirm("\u00bfConfirmas el bloqueo PERMANENTE de esta cuenta? Esta acci\u00f3n no se puede deshacer.")) return;
+          if (!window.confirm(`¿Confirmas el bloqueo permanente de ${vendedorReportado}? Esta accion no se puede deshacer desde reportes.`)) return;
           await bloqueoReporteApi(id, report.motivo);
           break;
         case "Desestimado": {
-          const razon = window.prompt("Raz\u00f3n para desestimar el reporte:", "Sin fundamento suficiente");
+          const razon = window.prompt("Razón para desestimar el reporte:", "Sin fundamento suficiente");
           if (!razon) return;
           await desestimarReporteApi(id, razon);
           break;
         }
         case "Contenido eliminado":
-          if (!window.confirm("\u00bfConfirmas la eliminaci\u00f3n del contenido reportado?")) return;
+          if (!window.confirm("¿Confirmas la eliminación del contenido reportado?")) return;
           await eliminarContenidoReporteApi(id, report.motivo);
           break;
         default:
@@ -142,20 +132,17 @@ export function AdminReportsPage() {
       }
 
       // Actualizar UI local
-      setReports((prev) =>
-        prev.map((r) => r.id === id ? { ...r, estado_reporte: newStatus } : r)
-      );
-
       // Mensajes de notificación contextuales
       const messages: Record<string, string> = {
         "Resuelto": `Reporte #${id} resuelto.`,
-        "Advertencia formal": `Advertencia formal registrada para usuario #${report.id_usuario}.`,
-        "Suspensión temporal": `Suspensión temporal de 7 días aplicada al usuario #${report.id_usuario}.`,
-        "Bloqueo permanente": `Bloqueo permanente aplicado al usuario #${report.id_usuario}.`,
+        "Advertencia formal": `Advertencia formal registrada para ${vendedorReportado}.`,
+        "Suspensión temporal": `Cuenta de ${vendedorReportado} suspendida temporalmente.`,
+        "Bloqueo permanente": `Bloqueo permanente aplicado a ${vendedorReportado}.`,
         "Desestimado": `Reporte #${id} desestimado.`,
         "Contenido eliminado": `Contenido del reporte #${id} eliminado.`,
       };
       toast.success(messages[newStatus] || `Estado actualizado a ${newStatus}.`);
+      await loadReports();
     } catch (err: any) {
       toast.error(err.message || "Error al actualizar reporte");
     }
@@ -166,8 +153,8 @@ export function AdminReportsPage() {
     if (!window.confirm(`¿Eliminar permanentemente el reporte #${report.id}? Esta acción no se puede deshacer.`)) return;
     try {
       await deleteReporteApi(report.id);
-      setReports((prev) => prev.filter((r) => r.id !== report.id));
       toast.success(`Reporte #${report.id} eliminado permanentemente.`);
+      await loadReports();
     } catch (err: any) {
       toast.error(err.message || "Error al eliminar reporte");
     }
@@ -188,7 +175,7 @@ export function AdminReportsPage() {
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 600 }}>Reportes y Denuncias</h1>
           <p className="text-muted-foreground" style={{ fontSize: 14 }}>
-            {reports.filter((r) => r.estado_reporte === "Pendiente").length} pendientes de revision
+            {reports.filter((r) => r.estado_reporte === "Pendiente").length} pendientes de revisión
           </p>
         </div>
       </div>
@@ -240,6 +227,11 @@ export function AdminReportsPage() {
                 <div>
                   <p className="text-muted-foreground" style={{ fontSize: 13 }}>Negocio: {report.negocio}</p>
                   <p style={{ fontSize: 14 }}>{report.tipo_objetivo}: {report.nombre_objetivo}</p>
+                  {report.usuario_reportado && (
+                    <p className="text-muted-foreground" style={{ fontSize: 12 }}>
+                      Vendedor reportado: {report.usuario_reportado.nombre}
+                    </p>
+                  )}
                 </div>
                 <span className={`px-2 py-1 rounded ${
                   report.tipo_objetivo === "producto" ? "bg-blue-100 text-blue-700" : "bg-purple-100 text-purple-700"
@@ -263,6 +255,22 @@ export function AdminReportsPage() {
                 <div className="mb-4">
                   <p className="text-muted-foreground mb-1" style={{ fontSize: 13 }}>Razon del reporte</p>
                   <p style={{ fontSize: 14, fontWeight: 500 }}>{report.motivo}</p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                  <div className="bg-white rounded-lg border border-border p-3">
+                    <p className="text-muted-foreground mb-1" style={{ fontSize: 12 }}>Reportante</p>
+                    <p style={{ fontSize: 14, fontWeight: 500 }}>
+                      {report.reportante?.nombre ?? `Usuario #${report.id_usuario_reportante ?? report.id_usuario}`}
+                    </p>
+                    {report.reportante?.email && <p className="text-muted-foreground" style={{ fontSize: 12 }}>{report.reportante.email}</p>}
+                  </div>
+                  <div className="bg-white rounded-lg border border-border p-3">
+                    <p className="text-muted-foreground mb-1" style={{ fontSize: 12 }}>Vendedor sancionable</p>
+                    <p style={{ fontSize: 14, fontWeight: 500 }}>
+                      {report.usuario_reportado?.nombre ?? `Usuario #${report.id_usuario_reportado ?? "N/D"}`}
+                    </p>
+                    {report.usuario_reportado?.email && <p className="text-muted-foreground" style={{ fontSize: 12 }}>{report.usuario_reportado.email}</p>}
+                  </div>
                 </div>
                 <div className="mb-6">
                   <p className="text-muted-foreground mb-1" style={{ fontSize: 13 }}>Descripcion detallada</p>
@@ -298,11 +306,11 @@ export function AdminReportsPage() {
                     <AlertTriangle size={16} /> Advertencia formal
                   </button>
                   <button
-                    onClick={() => handleAction(report, "Suspensi\u00f3n temporal")}
+                    onClick={() => handleAction(report, "Suspensión temporal")}
                     className="flex items-center gap-1 px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600"
                     style={{ fontSize: 14 }}
                   >
-                    <ShieldOff size={16} /> Suspensi\u00f3n temporal
+                    <ShieldOff size={16} /> Suspensión temporal
                   </button>
                   <button
                     onClick={() => handleAction(report, "Bloqueo permanente")}

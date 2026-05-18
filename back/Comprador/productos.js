@@ -3,6 +3,114 @@ const express = require("express");
 function createCompradorRouter({ pool }) {
   const router = express.Router();
 
+  function obtenerUsuarioSesion(req) {
+    return Number(req.session?.usuario_id || 0);
+  }
+
+  function requireSession(req, res) {
+    const idUsuario = obtenerUsuarioSesion(req);
+    if (!Number.isInteger(idUsuario) || idUsuario <= 0) {
+      res.status(401).json({ status: "error", mensaje: "Debes iniciar sesion" });
+      return null;
+    }
+    return idUsuario;
+  }
+
+  async function requireActiveSession(req, res) {
+    const idUsuario = requireSession(req, res);
+    if (!idUsuario) return null;
+
+    try {
+      const usuarioActivo = await pool.query(
+        `SELECT id
+         FROM usuarios
+         WHERE id = $1
+           AND activo = TRUE
+           AND fecha_eliminacion IS NULL
+         LIMIT 1`,
+        [idUsuario]
+      );
+
+      if (usuarioActivo.rows.length === 0) {
+        res.status(401).json({ status: "error", mensaje: "Sesion invalida o usuario inactivo" });
+        return null;
+      }
+
+      return idUsuario;
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ status: "error", mensaje: "Error al validar sesion" });
+      return null;
+    }
+  }
+
+  const precioProductoActualSql = `CASE
+    WHEN d.id IS NOT NULL
+      AND d.codigo_cupon IS NULL
+      AND CURRENT_TIMESTAMP BETWEEN d.fecha_inicio AND d.fecha_fin
+    THEN ROUND((p.precio * (1 - (d.porcentaje_descuento / 100)))::numeric, 2)
+    ELSE p.precio
+  END`;
+
+  const precioServicioActualSql = `CASE
+    WHEN d.id IS NOT NULL
+      AND d.codigo_cupon IS NULL
+      AND CURRENT_TIMESTAMP BETWEEN d.fecha_inicio AND d.fecha_fin
+    THEN ROUND((s.precio_base * (1 - (d.porcentaje_descuento / 100)))::numeric, 2)
+    ELSE s.precio_base
+  END`;
+
+  async function verificarCompra({ idUsuario, tipo, idItem }) {
+    const columnaItem = tipo === "producto" ? "id_producto" : "id_servicio";
+    const result = await pool.query(
+      `SELECT 1
+       FROM pedidos p
+       INNER JOIN detalle_pedido dp ON dp.id_pedido = p.id
+       WHERE p.id_usuario = $1
+         AND dp.${columnaItem} = $2
+         AND COALESCE(p.estado_pedido, '') NOT IN ('CANCELADO', 'CANCELADA')
+       LIMIT 1`,
+      [idUsuario, idItem]
+    );
+
+    return result.rows.length > 0;
+  }
+
+  async function obtenerResenaConUsuario(idResena) {
+    const result = await pool.query(
+      `SELECT
+         r.id,
+         r.id_usuario,
+         r.id_producto,
+         r.id_servicio,
+         r.calificacion,
+         r.comentario,
+         r.compra_verificada,
+         r.fecha_creacion,
+         u.nombre AS usuario
+       FROM resenas r
+       INNER JOIN usuarios u ON u.id = r.id_usuario
+       WHERE r.id = $1
+       LIMIT 1`,
+      [idResena]
+    );
+
+    const resena = result.rows[0];
+    if (!resena) return null;
+
+    return {
+      id: resena.id,
+      calificacion: Number(resena.calificacion),
+      comentario: resena.comentario,
+      compra_verificada: resena.compra_verificada,
+      fecha_creacion: resena.fecha_creacion,
+      usuario: {
+        id: resena.id_usuario,
+        nombre: resena.usuario,
+      },
+    };
+  }
+
   // Obtener categorias para el front 
   router.get("/comprador/categorias", async (req, res) => {
     try {
@@ -34,14 +142,24 @@ function createCompradorRouter({ pool }) {
            SELECT id, id AS raiz_id FROM categorias WHERE id_padre IS NULL
            UNION ALL
            SELECT c.id, a.raiz_id FROM categorias c INNER JOIN arbol a ON c.id_padre = a.id
+         ),
+         items AS (
+           SELECT a.raiz_id, 'producto' AS tipo, pc.id_producto AS item_id
+           FROM arbol a
+           INNER JOIN producto_categoria pc ON pc.id_categoria = a.id
+           INNER JOIN productos p ON p.id = pc.id_producto AND p.esta_activo = TRUE
+           UNION ALL
+           SELECT a.raiz_id, 'servicio' AS tipo, sc.id_servicio AS item_id
+           FROM arbol a
+           INNER JOIN servicio_categoria sc ON sc.id_categoria = a.id
+           INNER JOIN servicios s ON s.id = sc.id_servicio AND s.esta_activo = TRUE
          )
-         SELECT cat.id, cat.nombre_categoria, COUNT(DISTINCT pc.id_producto) AS total_productos
-         FROM arbol r
-         INNER JOIN producto_categoria pc ON pc.id_categoria = r.id
-         INNER JOIN categorias cat ON cat.id = r.raiz_id
+         SELECT cat.id, cat.nombre_categoria, COUNT(DISTINCT items.tipo || '-' || items.item_id) AS total_items
+         FROM items
+         INNER JOIN categorias cat ON cat.id = items.raiz_id
          GROUP BY cat.id, cat.nombre_categoria
-         HAVING COUNT(DISTINCT pc.id_producto) > 0
-         ORDER BY total_productos DESC
+         HAVING COUNT(DISTINCT items.tipo || '-' || items.item_id) > 0
+         ORDER BY total_items DESC
          LIMIT 10`
       );
 
@@ -49,7 +167,7 @@ function createCompradorRouter({ pool }) {
         result.rows.map((c) => ({
           id: c.id,
           nombre: c.nombre_categoria,
-          total: Number(c.total_productos),
+          total: Number(c.total_items),
         }))
       );
     } catch (error) {
@@ -83,13 +201,13 @@ function createCompradorRouter({ pool }) {
       const precioMinNum = Number(precio_min);
       if (precio_min !== undefined && precio_min !== "" && !Number.isNaN(precioMinNum)) {
         valores.push(precioMinNum);
-        filtros.push(`p.precio >= $${valores.length}`);
+        filtros.push(`(${precioProductoActualSql}) >= $${valores.length}`);
       }
 
       const precioMaxNum = Number(precio_max);
       if (precio_max !== undefined && precio_max !== "" && !Number.isNaN(precioMaxNum)) {
         valores.push(precioMaxNum);
-        filtros.push(`p.precio <= $${valores.length}`);
+        filtros.push(`(${precioProductoActualSql}) <= $${valores.length}`);
       }
 
       const calificacionMinNum = Number(calificacion_min);
@@ -99,12 +217,12 @@ function createCompradorRouter({ pool }) {
       }
 
       const orden = String(ordenar || "mejor_calificados").toLowerCase();
-      let orderBy = "p.calificacion DESC NULLS LAST, COUNT(r.id) DESC, p.fecha_registro DESC";
+      let orderBy = "p.calificacion DESC NULLS LAST, COUNT(DISTINCT r.id) DESC, p.fecha_registro DESC";
 
       if (orden === "precio_menor" || orden === "precio_menor_a_mayor" || orden === "precio_asc") {
-        orderBy = "p.precio ASC, p.nombre ASC";
+        orderBy = "precio ASC, p.nombre ASC";
       } else if (orden === "precio_mayor" || orden === "precio_mayor_a_menor" || orden === "precio_desc") {
-        orderBy = "p.precio DESC, p.nombre ASC";
+        orderBy = "precio DESC, p.nombre ASC";
       } else if (orden === "nombre" || orden === "nombre_az") {
         orderBy = "p.nombre ASC";
       } else if (orden === "relevancia" && qLikeIndex !== null) {
@@ -116,7 +234,7 @@ function createCompradorRouter({ pool }) {
             ELSE 0
           END DESC,
           p.calificacion DESC NULLS LAST,
-          COUNT(r.id) DESC,
+          COUNT(DISTINCT r.id) DESC,
           p.fecha_registro DESC`;
       }
 
@@ -147,12 +265,18 @@ function createCompradorRouter({ pool }) {
            END AS porcentaje_descuento,
            pi.url_imagen AS imagen_principal,
            COALESCE(n.nombre_comercial, '') AS empresa,
-           COUNT(r.id) AS numero_resenas
+           COUNT(DISTINCT r.id) AS numero_resenas
          FROM productos p
          INNER JOIN producto_categoria pc ON pc.id_producto = p.id
          LEFT JOIN negocios n ON n.id = p.id_negocio
          LEFT JOIN descuentos d ON d.id = p.id_descuento
-         LEFT JOIN producto_imagenes pi ON pi.id_producto = p.id AND pi.es_principal = TRUE
+        LEFT JOIN LATERAL (
+          SELECT pi_sub.url_imagen
+          FROM producto_imagenes pi_sub
+          WHERE pi_sub.id_producto = p.id
+          ORDER BY pi_sub.es_principal DESC, pi_sub.orden_visual ASC, pi_sub.id ASC
+          LIMIT 1
+        ) pi ON TRUE
          LEFT JOIN resenas r ON r.id_producto = p.id
          WHERE p.esta_activo = TRUE
            AND ${filtros.join(" AND ")}
@@ -205,13 +329,13 @@ function createCompradorRouter({ pool }) {
       const precioMinNum = Number(precio_min);
       if (precio_min !== undefined && precio_min !== "" && !Number.isNaN(precioMinNum)) {
         valores.push(precioMinNum);
-        filtros.push(`s.precio_base >= $${valores.length}`);
+        filtros.push(`(${precioServicioActualSql}) >= $${valores.length}`);
       }
 
       const precioMaxNum = Number(precio_max);
       if (precio_max !== undefined && precio_max !== "" && !Number.isNaN(precioMaxNum)) {
         valores.push(precioMaxNum);
-        filtros.push(`s.precio_base <= $${valores.length}`);
+        filtros.push(`(${precioServicioActualSql}) <= $${valores.length}`);
       }
 
       const calificacionMinNum = Number(calificacion_min);
@@ -221,12 +345,12 @@ function createCompradorRouter({ pool }) {
       }
 
       const orden = String(ordenar || "mejor_calificados").toLowerCase();
-      let orderBy = "s.calificacion DESC NULLS LAST, COUNT(r.id) DESC, s.fecha_registro DESC";
+      let orderBy = "s.calificacion DESC NULLS LAST, COUNT(DISTINCT r.id) DESC, s.fecha_registro DESC";
 
       if (orden === "precio_menor" || orden === "precio_menor_a_mayor" || orden === "precio_asc") {
-        orderBy = "s.precio_base ASC, s.nombre ASC";
+        orderBy = "precio ASC, s.nombre ASC";
       } else if (orden === "precio_mayor" || orden === "precio_mayor_a_menor" || orden === "precio_desc") {
-        orderBy = "s.precio_base DESC, s.nombre ASC";
+        orderBy = "precio DESC, s.nombre ASC";
       } else if (orden === "nombre" || orden === "nombre_az") {
         orderBy = "s.nombre ASC";
       } else if (orden === "relevancia" && qLikeIndex !== null) {
@@ -238,7 +362,7 @@ function createCompradorRouter({ pool }) {
             ELSE 0
           END DESC,
           s.calificacion DESC NULLS LAST,
-          COUNT(r.id) DESC,
+          COUNT(DISTINCT r.id) DESC,
           s.fecha_registro DESC`;
       }
 
@@ -269,17 +393,37 @@ function createCompradorRouter({ pool }) {
            END AS porcentaje_descuento,
            si.url_imagen AS imagen_principal,
            COALESCE(n.nombre_comercial, '') AS empresa,
-           COUNT(r.id) AS numero_resenas
+           COUNT(DISTINCT r.id) AS numero_resenas,
+           COALESCE(agenda.horarios_disponibles, 0) AS horarios_disponibles,
+           agenda.proximo_horario_inicio,
+           agenda.proximo_horario_fin
          FROM servicios s
          INNER JOIN servicio_categoria sc ON sc.id_servicio = s.id
          INNER JOIN negocios n ON n.id = s.id_negocio
          LEFT JOIN descuentos d ON d.id = s.id_descuento
-         LEFT JOIN servicio_imagenes si ON si.id_servicio = s.id AND si.es_principal = TRUE
+        LEFT JOIN LATERAL (
+          SELECT si_sub.url_imagen
+          FROM servicio_imagenes si_sub
+          WHERE si_sub.id_servicio = s.id
+          ORDER BY si_sub.es_principal DESC, si_sub.orden_visual ASC, si_sub.id ASC
+          LIMIT 1
+        ) si ON TRUE
          LEFT JOIN resenas r ON r.id_servicio = s.id
+         LEFT JOIN LATERAL (
+           SELECT
+             COUNT(*)::int AS horarios_disponibles,
+             MIN(ag.fecha_hora_inicio) AS proximo_horario_inicio,
+             (array_agg(ag.fecha_hora_fin ORDER BY ag.fecha_hora_inicio ASC))[1] AS proximo_horario_fin
+           FROM agenda_servicios ag
+           WHERE ag.id_servicio = s.id
+             AND ag.estado = 'disponible'
+             AND ag.fecha_hora_inicio > CURRENT_TIMESTAMP
+         ) agenda ON TRUE
          WHERE s.esta_activo = TRUE
            AND ${filtros.join(" AND ")}
          GROUP BY s.id, s.nombre, s.calificacion, s.precio_base, si.url_imagen, n.nombre_comercial, s.fecha_registro,
-                  d.id, d.codigo_cupon, d.porcentaje_descuento, d.fecha_inicio, d.fecha_fin
+                  d.id, d.codigo_cupon, d.porcentaje_descuento, d.fecha_inicio, d.fecha_fin,
+                  agenda.horarios_disponibles, agenda.proximo_horario_inicio, agenda.proximo_horario_fin
          ORDER BY ${orderBy}`,
         valores
       );
@@ -322,13 +466,13 @@ function createCompradorRouter({ pool }) {
       const precioMinNum = Number(precio_min);
       if (precio_min !== undefined && precio_min !== "" && !Number.isNaN(precioMinNum)) {
         valores.push(precioMinNum);
-        filtros.push(`p.precio >= $${valores.length}`);
+        filtros.push(`(${precioProductoActualSql}) >= $${valores.length}`);
       }
 
       const precioMaxNum = Number(precio_max);
       if (precio_max !== undefined && precio_max !== "" && !Number.isNaN(precioMaxNum)) {
         valores.push(precioMaxNum);
-        filtros.push(`p.precio <= $${valores.length}`);
+        filtros.push(`(${precioProductoActualSql}) <= $${valores.length}`);
       }
 
       const calificacionMinNum = Number(calificacion_min);
@@ -338,12 +482,12 @@ function createCompradorRouter({ pool }) {
       }
 
       const orden = String(ordenar || "mejor_calificados").toLowerCase();
-      let orderBy = "p.calificacion DESC NULLS LAST, COUNT(r.id) DESC, p.fecha_registro DESC";
+      let orderBy = "p.calificacion DESC NULLS LAST, COUNT(DISTINCT r.id) DESC, p.fecha_registro DESC";
 
       if (orden === "precio_menor" || orden === "precio_menor_a_mayor" || orden === "precio_asc") {
-        orderBy = "p.precio ASC, p.nombre ASC";
+        orderBy = "precio ASC, p.nombre ASC";
       } else if (orden === "precio_mayor" || orden === "precio_mayor_a_menor" || orden === "precio_desc") {
-        orderBy = "p.precio DESC, p.nombre ASC";
+        orderBy = "precio DESC, p.nombre ASC";
       } else if (orden === "nombre" || orden === "nombre_az") {
         orderBy = "p.nombre ASC";
       } else if (orden === "relevancia" && qLikeIndex !== null) {
@@ -355,7 +499,7 @@ function createCompradorRouter({ pool }) {
             ELSE 0
           END DESC,
           p.calificacion DESC NULLS LAST,
-          COUNT(r.id) DESC,
+          COUNT(DISTINCT r.id) DESC,
           p.fecha_registro DESC`;
       }
 
@@ -381,11 +525,17 @@ function createCompradorRouter({ pool }) {
            END AS porcentaje_descuento,
            pi.url_imagen AS imagen_principal,
            COALESCE(n.nombre_comercial, '') AS empresa,
-           COUNT(r.id) AS numero_resenas
+           COUNT(DISTINCT r.id) AS numero_resenas
          FROM productos p
          LEFT JOIN negocios n ON n.id = p.id_negocio
          LEFT JOIN descuentos d ON d.id = p.id_descuento
-         LEFT JOIN producto_imagenes pi ON pi.id_producto = p.id AND pi.es_principal = TRUE
+        LEFT JOIN LATERAL (
+          SELECT pi_sub.url_imagen
+          FROM producto_imagenes pi_sub
+          WHERE pi_sub.id_producto = p.id
+          ORDER BY pi_sub.es_principal DESC, pi_sub.orden_visual ASC, pi_sub.id ASC
+          LIMIT 1
+        ) pi ON TRUE
          LEFT JOIN resenas r ON r.id_producto = p.id
          WHERE ${filtros.join(" AND ")}
          GROUP BY p.id, p.nombre, p.calificacion, p.precio, pi.url_imagen, n.nombre_comercial, p.fecha_registro,
@@ -431,13 +581,13 @@ function createCompradorRouter({ pool }) {
       const precioMinNum = Number(precio_min);
       if (precio_min !== undefined && precio_min !== "" && !Number.isNaN(precioMinNum)) {
         valores.push(precioMinNum);
-        filtros.push(`s.precio_base >= $${valores.length}`);
+        filtros.push(`(${precioServicioActualSql}) >= $${valores.length}`);
       }
 
       const precioMaxNum = Number(precio_max);
       if (precio_max !== undefined && precio_max !== "" && !Number.isNaN(precioMaxNum)) {
         valores.push(precioMaxNum);
-        filtros.push(`s.precio_base <= $${valores.length}`);
+        filtros.push(`(${precioServicioActualSql}) <= $${valores.length}`);
       }
 
       const calificacionMinNum = Number(calificacion_min);
@@ -447,12 +597,12 @@ function createCompradorRouter({ pool }) {
       }
 
       const orden = String(ordenar || "mejor_calificados").toLowerCase();
-      let orderBy = "s.calificacion DESC NULLS LAST, COUNT(r.id) DESC, s.fecha_registro DESC";
+      let orderBy = "s.calificacion DESC NULLS LAST, COUNT(DISTINCT r.id) DESC, s.fecha_registro DESC";
 
       if (orden === "precio_menor" || orden === "precio_menor_a_mayor" || orden === "precio_asc") {
-        orderBy = "s.precio_base ASC, s.nombre ASC";
+        orderBy = "precio ASC, s.nombre ASC";
       } else if (orden === "precio_mayor" || orden === "precio_mayor_a_menor" || orden === "precio_desc") {
-        orderBy = "s.precio_base DESC, s.nombre ASC";
+        orderBy = "precio DESC, s.nombre ASC";
       } else if (orden === "nombre" || orden === "nombre_az") {
         orderBy = "s.nombre ASC";
       } else if (orden === "relevancia" && qLikeIndex !== null) {
@@ -464,7 +614,7 @@ function createCompradorRouter({ pool }) {
             ELSE 0
           END DESC,
           s.calificacion DESC NULLS LAST,
-          COUNT(r.id) DESC,
+          COUNT(DISTINCT r.id) DESC,
           s.fecha_registro DESC`;
       }
 
@@ -490,15 +640,35 @@ function createCompradorRouter({ pool }) {
            END AS porcentaje_descuento,
            si.url_imagen AS imagen_principal,
            COALESCE(n.nombre_comercial, '') AS empresa,
-           COUNT(r.id) AS numero_resenas
+           COUNT(DISTINCT r.id) AS numero_resenas,
+           COALESCE(agenda.horarios_disponibles, 0) AS horarios_disponibles,
+           agenda.proximo_horario_inicio,
+           agenda.proximo_horario_fin
          FROM servicios s
          LEFT JOIN negocios n ON n.id = s.id_negocio
          LEFT JOIN descuentos d ON d.id = s.id_descuento
-         LEFT JOIN servicio_imagenes si ON si.id_servicio = s.id AND si.es_principal = TRUE
+        LEFT JOIN LATERAL (
+          SELECT si_sub.url_imagen
+          FROM servicio_imagenes si_sub
+          WHERE si_sub.id_servicio = s.id
+          ORDER BY si_sub.es_principal DESC, si_sub.orden_visual ASC, si_sub.id ASC
+          LIMIT 1
+        ) si ON TRUE
          LEFT JOIN resenas r ON r.id_servicio = s.id
+         LEFT JOIN LATERAL (
+           SELECT
+             COUNT(*)::int AS horarios_disponibles,
+             MIN(ag.fecha_hora_inicio) AS proximo_horario_inicio,
+             (array_agg(ag.fecha_hora_fin ORDER BY ag.fecha_hora_inicio ASC))[1] AS proximo_horario_fin
+           FROM agenda_servicios ag
+           WHERE ag.id_servicio = s.id
+             AND ag.estado = 'disponible'
+             AND ag.fecha_hora_inicio > CURRENT_TIMESTAMP
+         ) agenda ON TRUE
          WHERE ${filtros.join(" AND ")}
          GROUP BY s.id, s.nombre, s.calificacion, s.precio_base, si.url_imagen, n.nombre_comercial, s.fecha_registro,
-                  d.id, d.codigo_cupon, d.porcentaje_descuento, d.fecha_inicio, d.fecha_fin
+                  d.id, d.codigo_cupon, d.porcentaje_descuento, d.fecha_inicio, d.fecha_fin,
+                  agenda.horarios_disponibles, agenda.proximo_horario_inicio, agenda.proximo_horario_fin
          ORDER BY ${orderBy}`,
         valores
       );
@@ -533,11 +703,17 @@ function createCompradorRouter({ pool }) {
            d.porcentaje_descuento,
            pi.url_imagen AS imagen_principal,
            COALESCE(n.nombre_comercial, '') AS empresa,
-           COUNT(r.id) AS numero_resenas
+           COUNT(DISTINCT r.id) AS numero_resenas
          FROM productos p
          INNER JOIN descuentos d ON d.id = p.id_descuento
          LEFT JOIN negocios n ON n.id = p.id_negocio
-         LEFT JOIN producto_imagenes pi ON pi.id_producto = p.id AND pi.es_principal = TRUE
+        LEFT JOIN LATERAL (
+          SELECT pi_sub.url_imagen
+          FROM producto_imagenes pi_sub
+          WHERE pi_sub.id_producto = p.id
+          ORDER BY pi_sub.es_principal DESC, pi_sub.orden_visual ASC, pi_sub.id ASC
+          LIMIT 1
+        ) pi ON TRUE
          LEFT JOIN resenas r ON r.id_producto = p.id
          WHERE p.esta_activo = TRUE
            AND d.codigo_cupon IS NULL
@@ -579,16 +755,36 @@ function createCompradorRouter({ pool }) {
            d.porcentaje_descuento,
            si.url_imagen AS imagen_principal,
            COALESCE(n.nombre_comercial, '') AS empresa,
-           COUNT(r.id) AS numero_resenas
+           COUNT(DISTINCT r.id) AS numero_resenas,
+           COALESCE(agenda.horarios_disponibles, 0) AS horarios_disponibles,
+           agenda.proximo_horario_inicio,
+           agenda.proximo_horario_fin
          FROM servicios s
          INNER JOIN descuentos d ON d.id = s.id_descuento
          LEFT JOIN negocios n ON n.id = s.id_negocio
-         LEFT JOIN servicio_imagenes si ON si.id_servicio = s.id AND si.es_principal = TRUE
+        LEFT JOIN LATERAL (
+          SELECT si_sub.url_imagen
+          FROM servicio_imagenes si_sub
+          WHERE si_sub.id_servicio = s.id
+          ORDER BY si_sub.es_principal DESC, si_sub.orden_visual ASC, si_sub.id ASC
+          LIMIT 1
+        ) si ON TRUE
          LEFT JOIN resenas r ON r.id_servicio = s.id
+         LEFT JOIN LATERAL (
+           SELECT
+             COUNT(*)::int AS horarios_disponibles,
+             MIN(ag.fecha_hora_inicio) AS proximo_horario_inicio,
+             (array_agg(ag.fecha_hora_fin ORDER BY ag.fecha_hora_inicio ASC))[1] AS proximo_horario_fin
+           FROM agenda_servicios ag
+           WHERE ag.id_servicio = s.id
+             AND ag.estado = 'disponible'
+             AND ag.fecha_hora_inicio > CURRENT_TIMESTAMP
+         ) agenda ON TRUE
          WHERE s.esta_activo = TRUE
            AND d.codigo_cupon IS NULL
            AND CURRENT_TIMESTAMP BETWEEN d.fecha_inicio AND d.fecha_fin
-         GROUP BY s.id, s.nombre, s.calificacion, s.precio_base, d.porcentaje_descuento, si.url_imagen, n.nombre_comercial, s.fecha_registro
+         GROUP BY s.id, s.nombre, s.calificacion, s.precio_base, d.porcentaje_descuento, si.url_imagen, n.nombre_comercial, s.fecha_registro,
+                  agenda.horarios_disponibles, agenda.proximo_horario_inicio, agenda.proximo_horario_fin
          ORDER BY s.fecha_registro DESC, s.nombre ASC`
       );
 
@@ -604,11 +800,96 @@ function createCompradorRouter({ pool }) {
           imagen_principal: servicio.imagen_principal,
           empresa: servicio.empresa,
           numero_resenas: Number(servicio.numero_resenas),
+          horarios_disponibles: Number(servicio.horarios_disponibles || 0),
+          proximo_horario_inicio: servicio.proximo_horario_inicio,
+          proximo_horario_fin: servicio.proximo_horario_fin,
         })),
       });
     } catch (error) {
       console.error(error);
       return res.status(500).json({ mensaje: "Error al obtener servicios con descuento" });
+    }
+  });
+
+  router.post("/comprador/resenas", async (req, res) => {
+    try {
+      const idUsuario = await requireActiveSession(req, res);
+      if (!idUsuario) return;
+
+      const tipo = String(req.body?.tipo || "").trim().toLowerCase();
+      const idItem = Number(req.body?.id_item);
+      const calificacion = Number(req.body?.calificacion);
+      const comentario = String(req.body?.comentario || "").trim();
+
+      if (!["producto", "servicio"].includes(tipo)) {
+        return res.status(400).json({ status: "error", mensaje: "Tipo de resena invalido" });
+      }
+
+      if (!Number.isInteger(idItem) || idItem <= 0) {
+        return res.status(400).json({ status: "error", mensaje: "Item invalido para resenar" });
+      }
+
+      if (!Number.isInteger(calificacion) || calificacion < 1 || calificacion > 5) {
+        return res.status(400).json({ status: "error", mensaje: "La calificacion debe ser un numero entero entre 1 y 5" });
+      }
+
+      if (comentario.length < 10) {
+        return res.status(400).json({ status: "error", mensaje: "El comentario debe tener al menos 10 caracteres" });
+      }
+
+      if (comentario.length > 1000) {
+        return res.status(400).json({ status: "error", mensaje: "El comentario no puede exceder 1000 caracteres" });
+      }
+
+      const itemResult = await pool.query(
+        tipo === "producto"
+          ? "SELECT id FROM productos WHERE id = $1 AND esta_activo = TRUE LIMIT 1"
+          : "SELECT id FROM servicios WHERE id = $1 AND esta_activo = TRUE LIMIT 1",
+        [idItem]
+      );
+
+      if (itemResult.rows.length === 0) {
+        return res.status(404).json({ status: "error", mensaje: "El item no existe o no esta disponible" });
+      }
+
+      const compraVerificada = await verificarCompra({ idUsuario, tipo, idItem });
+
+      const result = tipo === "producto"
+        ? await pool.query(
+          `INSERT INTO resenas (id_usuario, id_producto, id_servicio, calificacion, comentario, compra_verificada)
+           VALUES ($1, $2, NULL, $3, $4, $5)
+           ON CONFLICT (id_usuario, id_producto) WHERE id_producto IS NOT NULL
+           DO UPDATE SET
+             calificacion = EXCLUDED.calificacion,
+             comentario = EXCLUDED.comentario,
+             compra_verificada = EXCLUDED.compra_verificada,
+             fecha_creacion = CURRENT_TIMESTAMP
+           RETURNING id`,
+          [idUsuario, idItem, calificacion, comentario, compraVerificada]
+        )
+        : await pool.query(
+          `INSERT INTO resenas (id_usuario, id_producto, id_servicio, calificacion, comentario, compra_verificada)
+           VALUES ($1, NULL, $2, $3, $4, $5)
+           ON CONFLICT (id_usuario, id_servicio) WHERE id_servicio IS NOT NULL
+           DO UPDATE SET
+             calificacion = EXCLUDED.calificacion,
+             comentario = EXCLUDED.comentario,
+             compra_verificada = EXCLUDED.compra_verificada,
+             fecha_creacion = CURRENT_TIMESTAMP
+           RETURNING id`,
+          [idUsuario, idItem, calificacion, comentario, compraVerificada]
+        );
+
+      const resena = await obtenerResenaConUsuario(result.rows[0].id);
+
+      return res.status(200).json({
+        status: "success",
+        mensaje: "Resena guardada correctamente",
+        resena,
+      });
+    } catch (error) {
+      console.error("Error al guardar resena:", error);
+      return res.status(500).json({ status: "error", mensaje: "Error al guardar la resena" });
     }
   });
 
@@ -683,7 +964,13 @@ function createCompradorRouter({ pool }) {
          FROM productos p
          LEFT JOIN negocios n ON n.id = p.id_negocio
          LEFT JOIN descuentos d ON d.id = p.id_descuento
-         LEFT JOIN producto_imagenes img ON img.id_producto = p.id AND img.es_principal = TRUE
+         LEFT JOIN LATERAL (
+           SELECT img_sub.url_imagen
+           FROM producto_imagenes img_sub
+           WHERE img_sub.id_producto = p.id
+           ORDER BY img_sub.es_principal DESC, img_sub.orden_visual ASC, img_sub.id ASC
+           LIMIT 1
+         ) img ON TRUE
          WHERE p.id = $1
            AND p.esta_activo = TRUE
          LIMIT 1`,
@@ -809,7 +1096,13 @@ function createCompradorRouter({ pool }) {
          FROM servicios s
          LEFT JOIN negocios n ON n.id = s.id_negocio
          LEFT JOIN descuentos d ON d.id = s.id_descuento
-         LEFT JOIN servicio_imagenes img ON img.id_servicio = s.id AND img.es_principal = TRUE
+         LEFT JOIN LATERAL (
+           SELECT img_sub.url_imagen
+           FROM servicio_imagenes img_sub
+           WHERE img_sub.id_servicio = s.id
+           ORDER BY img_sub.es_principal DESC, img_sub.orden_visual ASC, img_sub.id ASC
+           LIMIT 1
+         ) img ON TRUE
          WHERE s.id = $1
            AND s.esta_activo = TRUE
          LIMIT 1`,
@@ -838,6 +1131,7 @@ function createCompradorRouter({ pool }) {
          LEFT JOIN direcciones d ON d.id = n.id_direccion
          WHERE ag.id_servicio = $1
            AND ag.estado = 'disponible'
+           AND ag.fecha_hora_inicio >= CURRENT_TIMESTAMP
          ORDER BY ag.fecha_hora_inicio ASC`,
         [idServicio]
       );

@@ -21,6 +21,9 @@ export function DashboardLayout({ title, items }: DashboardLayoutProps) {
     if (itemPath === "/") {
       return location.pathname === "/";
     }
+    if (itemPath === "/vendedor") {
+      return location.pathname === "/vendedor";
+    }
     return location.pathname === itemPath || location.pathname.startsWith(`${itemPath}/`);
   };
 

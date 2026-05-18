@@ -19,7 +19,7 @@ import {
   Flag,
   X,
 } from "lucide-react";
-import { type Product } from "../data/mock-data";
+import { type Product, type ServiceAgendaSlot } from "../data/mock-data";
 import { getProductoDetalleApi, getServicioDetalleApi, createReviewApi, createReporteCompradorApi } from "../api/api-client";
 import { StarRating } from "../components/star-rating";
 import { useStore } from "../context/store-context";
@@ -55,8 +55,7 @@ export function ProductDetailPage() {
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
 
   // States para Servicios
-  const [selectedDate, setSelectedDate] = useState<string>("");
-  const [selectedTime, setSelectedTime] = useState<string>("");
+  const [selectedAgendaId, setSelectedAgendaId] = useState<string>("");
 
   const formatDate = (date?: string) => {
     if (!date) return "No disponible";
@@ -66,6 +65,19 @@ export function ProductDetailPage() {
       day: "numeric",
     });
   };
+
+  const formatAgendaDate = (slot: ServiceAgendaSlot) =>
+    new Date(slot.start).toLocaleDateString("es-MX", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    });
+
+  const formatAgendaTime = (value: string) =>
+    new Date(value).toLocaleTimeString("es-MX", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
   // ─── Cargar producto SOLO del backend (fiel a la BD) ──────────────────────
   useEffect(() => {
@@ -100,6 +112,12 @@ export function ProductDetailPage() {
     }
   }, [id, typeParam]);
 
+  useEffect(() => {
+    if (product?.type === "servicio") {
+      setSelectedAgendaId(product.agendaSlots?.[0]?.id ?? "");
+    }
+  }, [product?.id, product?.type]);
+
   const isService = product?.type === "servicio";
 
   if (isLoading) {
@@ -129,19 +147,24 @@ export function ProductDetailPage() {
     );
   }
 
-  const inWishlist = isInWishlist(product.id);
+  const inWishlist = isInWishlist(product.id, product.type ?? "producto");
   // TODO: Agregar endpoint de productos relacionados / bundles en el backend
   const sellerBundles: any[] = [];
   const relatedProducts: Product[] = [];
 
-  const handleAddToCart = () => {
+  const handleAddToCart = async () => {
     if (isService) {
-      if (!selectedDate || !selectedTime) {
-        toast.error("Por favor selecciona una fecha y hora para el servicio");
+      const selectedSlot = product.agendaSlots?.find((slot) => slot.id === selectedAgendaId);
+      if (!selectedSlot) {
+        toast.error("Selecciona un horario disponible para el servicio");
         return;
       }
-      addToCart(product, 1, selectedDate, selectedTime);
-      toast.success(`${product.name} agendado para el ${selectedDate} a las ${selectedTime}`);
+      try {
+        await addToCart(product, 1, selectedSlot.id);
+        toast.success(`${product.name} agendado para ${formatAgendaDate(selectedSlot)} de ${formatAgendaTime(selectedSlot.start)} a ${formatAgendaTime(selectedSlot.end)}`);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "No se pudo agregar el servicio");
+      }
     } else {
       if (product.stock === 0) {
         toast.error("Este producto esta agotado");
@@ -151,14 +174,18 @@ export function ProductDetailPage() {
         toast.error(`Solo hay ${product.stock} unidades disponibles`);
         return;
       }
-      addToCart(product, quantity);
-      toast.success(`${product.name} (x${quantity}) agregado al carrito`);
+      try {
+        await addToCart(product, quantity);
+        toast.success(`${product.name} (x${quantity}) agregado al carrito`);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "No se pudo agregar al carrito");
+      }
     }
   };
 
   const handleToggleWishlist = () => {
     if (inWishlist) {
-      removeFromWishlist(product.id);
+      removeFromWishlist(product.id, product.type ?? "producto");
       toast("Eliminado de lista de deseos");
     } else {
       addToWishlist(product);
@@ -215,7 +242,7 @@ export function ProductDetailPage() {
         reviewRating,
         reviewComment
       );
-      toast.success("Resena enviada exitosamente");
+      toast.success("Reseña enviada exitosamente");
       setShowReviewForm(false);
       setReviewRating(0);
       setReviewComment("");
@@ -354,37 +381,47 @@ export function ProductDetailPage() {
               {isService ? (
                 <div className="mb-6 space-y-4 bg-gray-50 p-4 rounded-xl border border-border">
                   <h3 style={{ fontSize: 16, fontWeight: 600 }}>Agendar Servicio</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block mb-1.5 flex items-center gap-2" style={{ fontSize: 13, fontWeight: 500 }}>
-                        <Calendar size={14} className="text-primary" /> Fecha
-                      </label>
-                      <input
-                        type="date"
-                        min={new Date().toISOString().split("T")[0]}
-                        value={selectedDate}
-                        onChange={(e) => setSelectedDate(e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg border border-border bg-white outline-none focus:border-primary"
-                      />
+                  {product.agendaSlots && product.agendaSlots.length > 0 ? (
+                    <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                      {product.agendaSlots.map((slot) => {
+                        const selected = selectedAgendaId === slot.id;
+                        return (
+                          <button
+                            key={slot.id}
+                            type="button"
+                            onClick={() => setSelectedAgendaId(slot.id)}
+                            className={`w-full text-left border rounded-xl p-3 transition-colors ${
+                              selected ? "border-primary bg-primary/5" : "border-border bg-white hover:border-primary/40"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="flex items-center gap-2" style={{ fontSize: 14, fontWeight: 600 }}>
+                                <Calendar size={15} className="text-primary" />
+                                {formatAgendaDate(slot)}
+                              </span>
+                              {selected && <CheckCircle2 size={18} className="text-primary" />}
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-2 text-muted-foreground" style={{ fontSize: 13 }}>
+                              <span className="flex items-center gap-1">
+                                <Clock size={14} />
+                                {formatAgendaTime(slot.start)} - {formatAgendaTime(slot.end)}
+                              </span>
+                              {(slot.branchName || slot.branchAddress) && (
+                                <span className="flex items-center gap-1">
+                                  <MapPin size={14} />
+                                  {slot.branchName || slot.branchAddress}
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
-                    <div>
-                      <label className="block mb-1.5 flex items-center gap-2" style={{ fontSize: 13, fontWeight: 500 }}>
-                        <Clock size={14} className="text-primary" /> Horario
-                      </label>
-                      <select
-                        value={selectedTime}
-                        onChange={(e) => setSelectedTime(e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg border border-border bg-white outline-none focus:border-primary"
-                      >
-                        <option value="">Selecciona hora</option>
-                        <option value="09:00">09:00 AM</option>
-                        <option value="11:00">11:00 AM</option>
-                        <option value="14:00">02:00 PM</option>
-                        <option value="16:00">04:00 PM</option>
-                        <option value="18:00">06:00 PM</option>
-                      </select>
+                  ) : (
+                    <div className="bg-white border border-amber-200 text-amber-700 rounded-xl p-4" style={{ fontSize: 14 }}>
+                      Este servicio aun no tiene horarios disponibles.
                     </div>
-                  </div>
+                  )}
                 </div>
               ) : (
                 <div className="flex items-center gap-4 mb-6">
@@ -413,7 +450,7 @@ export function ProductDetailPage() {
               <div className="flex gap-3 mb-6">
                 <button
                   onClick={handleAddToCart}
-                  disabled={!isService && product.stock === 0}
+                  disabled={(!isService && product.stock === 0) || (isService && (!product.agendaSlots || product.agendaSlots.length === 0))}
                   className="flex-1 flex items-center justify-center gap-2 bg-primary text-white py-3.5 rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{ fontSize: 16, fontWeight: 600 }}
                 >
@@ -526,7 +563,7 @@ export function ProductDetailPage() {
                     <div>
                       <p style={{ fontSize: 14, fontWeight: 600 }}>{product.branchName || "Sucursal principal"}</p>
                       <p className="text-muted-foreground mt-1" style={{ fontSize: 13 }}>
-                        {product.branchAddress || "Ubicacion no disponible"}
+                        {product.branchAddress || "Ubicación no disponible"}
                       </p>
                     </div>
                   </div>

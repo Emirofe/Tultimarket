@@ -8,6 +8,7 @@ import { CartPage } from "./pages/cart";
 import { CheckoutPage } from "./pages/checkout";
 import { ProfilePage } from "./pages/profile";
 import { OrderHistoryPage } from "./pages/order-history";
+import { OrderDetailPage } from "./pages/order-detail";
 import { WishlistPage } from "./pages/wishlist";
 import { SellerLayout } from "./pages/seller/seller-layout";
 import { SellerDashboardPage } from "./pages/seller/dashboard";
@@ -18,6 +19,7 @@ import { SellerServicesPage } from "./pages/seller/services";
 import { SellerSalesPage } from "./pages/seller/sales";
 import { SellerAgendaPage } from "./pages/seller/agenda";
 import { SellerCategoriesPage } from "./pages/seller/categories";
+import { SellerBusinessPage } from "./pages/seller/business";
 import { AdminLayout } from "./pages/admin/admin-layout";
 import { AdminUsersPage } from "./pages/admin/users";
 import { AdminCategoriesPage } from "./pages/admin/categories";
@@ -40,6 +42,7 @@ export const router = createBrowserRouter([
       { path: "checkout", Component: CheckoutPage },
       { path: "perfil", Component: ProfilePage },
       { path: "mis-compras", Component: OrderHistoryPage },
+      { path: "mis-compras/:pedidoId", Component: OrderDetailPage },
       { path: "wishlist", Component: WishlistPage },
       { path: "buscar", Component: SearchPage },
       {
@@ -49,6 +52,7 @@ export const router = createBrowserRouter([
           { index: true, Component: SellerDashboardPage },
           { path: "productos", Component: SellerProductsPage },
           { path: "inventario", Component: SellerInventoryPage },
+          { path: "negocio", Component: SellerBusinessPage },
           { path: "pedidos", Component: SellerOrdersPage },
           { path: "ventas", Component: SellerSalesPage },
           { path: "servicios", Component: SellerServicesPage },

@@ -3,6 +3,16 @@ const crypto = require("crypto");
 
 function createCompradorCuentaRouter({ pool }) {
 	const router = express.Router();
+	const perfilesValidos = new Set(["comprador", "cliente", "vendedor", "admin"]);
+
+	function validarPerfil(req, res, next) {
+		const perfil = String(req.params?.perfil || "").trim().toLowerCase();
+		if (!perfilesValidos.has(perfil)) {
+			return res.status(404).json({ mensaje: "Perfil no valido" });
+		}
+
+		return next();
+	}
 
 	function obtenerUsuarioSesion(req) {
 		return Number(req.session?.usuario_id || 0);
@@ -46,6 +56,8 @@ function createCompradorCuentaRouter({ pool }) {
 			return res.status(500).json({ mensaje: "Error al validar sesion" });
 		}
 	}
+
+	router.use("/:perfil/cuenta", validarPerfil);
 
 	// Obtener informacion del usuario autenticado
 	router.get("/:perfil/cuenta", async (req, res) => {

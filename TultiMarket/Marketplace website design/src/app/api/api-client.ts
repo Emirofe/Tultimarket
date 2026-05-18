@@ -30,7 +30,7 @@ import {
   type RawCategoria,
 } from "./mappers";
 
-import type { Product, User, Address, PaymentMethod, Order } from "../data/mock-data";
+import type { Product, User, Address, PaymentMethod, Order, OrderCoupon } from "../data/mock-data";
 
 // URL base del backend. Usa el mismo hostname del frontend para que la cookie
 // de sesion no se pierda entre localhost y 127.0.0.1.
@@ -61,7 +61,19 @@ async function api<T>(
 
   // Si la respuesta está vacía (204 No Content) devolver un objeto vacío
   const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
+  let data: any = {};
+
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (!response.ok) {
+        throw new Error(`Error HTTP ${response.status}: respuesta invalida del servidor`);
+      }
+
+      throw new Error("Respuesta invalida del servidor");
+    }
+  }
 
   if (!response.ok) {
     // El backend usa "mensaje" para errors, pero algunos endpoints de vendedor usan "error"
@@ -145,9 +157,7 @@ export async function registerApi(
  *
  * POST /logout
  *
- * BUG CORREGIDO: El backend hace res.redirect("/login") que causa un
- * error de CORS/parsing. Usamos mode: "no-cors" como fallback y
- * atrapamos todo error silenciosamente.
+ * El backend responde JSON y destruye la sesion.
  */
 export async function logoutApi(): Promise<void> {
   try {
@@ -155,9 +165,7 @@ export async function logoutApi(): Promise<void> {
       method: "POST",
       credentials: "include",
     });
-  } catch {
-    // El back redirige, es esperado que falle
-  }
+  } catch {}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -559,7 +567,7 @@ export async function getCarritoApi() {
       cantidad: number;
       precio_unitario: number;
       subtotal: number;
-      agenda: null | { fecha_hora_inicio: string; fecha_hora_fin: string; estado: string };
+      agenda: null | { id_agenda: number; fecha_hora_inicio: string; fecha_hora_fin: string; estado: string };
     }>;
   }>("/comprador/carrito");
 }
@@ -658,15 +666,58 @@ export async function vaciarCarritoApi() {
  *   - El carrito NO puede estar vacío
  *   - Llama a la función SQL procesar_checkout() que es una transacción atómica
  */
-export async function checkoutApi(idDireccion?: number, idMetodoPago?: number) {
+export interface CuponCarritoPreview {
+  cupon: {
+    codigo_cupon: string;
+    porcentaje_descuento: number;
+  };
+  subtotal: number;
+  descuento_aplicado: number;
+  total: number;
+  items_afectados: Array<{
+    id_item: number;
+    tipo_item: "producto" | "servicio";
+    id_producto: number | null;
+    id_servicio: number | null;
+    nombre: string;
+    cantidad: number;
+    descuento_cupon: number;
+  }>;
+}
+
+export async function validarCuponCarritoApi(codigoCupon: string): Promise<CuponCarritoPreview> {
+  const data = await api<{
+    mensaje: string;
+    cupon: { codigo_cupon: string; porcentaje_descuento: number };
+    subtotal: number;
+    descuento_aplicado: number;
+    total: number;
+    items_afectados: CuponCarritoPreview["items_afectados"];
+  }>("/comprador/carrito/cupon", {
+    method: "POST",
+    body: JSON.stringify({ codigo_cupon: codigoCupon }),
+  });
+
+  return {
+    cupon: data.cupon,
+    subtotal: Number(data.subtotal) || 0,
+    descuento_aplicado: Number(data.descuento_aplicado) || 0,
+    total: Number(data.total) || 0,
+    items_afectados: data.items_afectados || [],
+  };
+}
+
+export async function checkoutApi(idDireccion?: number, idMetodoPago?: number, codigoCupon?: string | null) {
   return api<{
     mensaje: string;
     pedido: { id: number; total: number; estado_pedido: string; fecha_pedido: string };
+    cupon?: null | { codigo_cupon: string; porcentaje_descuento: number; descuento_aplicado: number };
   }>("/comprador/carrito/checkout", {
     method: "POST",
     body: JSON.stringify({
       id_direccion: idDireccion ?? null,
       id_metodo_pago: idMetodoPago ?? null,
+      codigo_cupon: codigoCupon || null,
     }),
   });
 }
@@ -676,66 +727,120 @@ export async function checkoutApi(idDireccion?: number, idMetodoPago?: number) {
  * Historial de pedidos del comprador autenticado.
  * Devuelve pedidos con items, total, estado, snapshots de dirección y método de pago.
  */
+type RawPedidoCompradorItem = {
+  id: number;
+  producto_id?: number | null;
+  servicio_id?: number | null;
+  id_producto?: number | null;
+  id_servicio?: number | null;
+  tipo: string;
+  nombre: string;
+  cantidad: number;
+  precio: number;
+  subtotal: number;
+  imagen: string | null;
+  agenda?: null | { id_agenda: number; fecha_inicio: string; fecha_fin: string; estado: string };
+};
+
+type RawPedidoComprador = {
+  id: number;
+  folio: string;
+  fecha: string;
+  total: number;
+  estado: string;
+  direccion: any;
+  metodo_pago: any;
+  cupon?: OrderCoupon | OrderCoupon[] | null;
+  items: RawPedidoCompradorItem[];
+};
+
+const formatAgendaDate = (value?: string) =>
+  value
+    ? new Date(value).toLocaleDateString("es-MX", { year: "numeric", month: "short", day: "numeric" })
+    : undefined;
+
+const formatAgendaTime = (value?: string) =>
+  value
+    ? new Date(value).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })
+    : undefined;
+
+function formatPedidoDireccion(direccion: any) {
+  if (!direccion) return "";
+  if (typeof direccion === "string") return direccion;
+  return [
+    direccion.calle,
+    direccion.ciudad,
+    direccion.estado,
+    direccion.codigo_postal,
+    direccion.pais,
+  ].filter(Boolean).join(", ");
+}
+
+function formatPedidoMetodoPago(metodoPago: any) {
+  if (!metodoPago) return undefined;
+  if (typeof metodoPago === "string") return metodoPago;
+  const proveedor = metodoPago.proveedor_pago ?? "Tarjeta";
+  const ultimos = metodoPago.ultimos_cuatro ? ` ****${metodoPago.ultimos_cuatro}` : "";
+  return `${proveedor}${ultimos}`;
+}
+
+function mapPedidoComprador(raw: RawPedidoComprador): Order {
+  return {
+    id: String(raw.id),
+    folio: raw.folio,
+    date: raw.fecha
+      ? new Date(raw.fecha).toISOString().split("T")[0]
+      : new Date().toISOString().split("T")[0],
+    total: Number(raw.total) || 0,
+    status: raw.estado ?? "Pendiente",
+    buyerName: "",
+    buyerId: "",
+    address: formatPedidoDireccion(raw.direccion),
+    paymentMethod: formatPedidoMetodoPago(raw.metodo_pago),
+    cupon: raw.cupon ?? null,
+    items: (raw.items || []).map((item) => {
+      const productId =
+        item.producto_id ??
+        item.id_producto ??
+        item.servicio_id ??
+        item.id_servicio ??
+        item.id;
+
+      return {
+        product: {
+          id: String(productId),
+          name: item.nombre,
+          description: "",
+          price: Number(item.precio) || 0,
+          image: item.imagen ?? "https://placehold.co/400x400?text=Producto",
+          images: [],
+          category: "general",
+          rating: 0,
+          reviewCount: 0,
+          stock: 0,
+          sellerId: "0",
+          sellerName: "",
+          reviews: [],
+          type: item.tipo as "producto" | "servicio",
+          status: "Aprobado" as const,
+        },
+        quantity: Number(item.cantidad) || 1,
+        agendaSlotId: item.agenda?.id_agenda ? String(item.agenda.id_agenda) : undefined,
+        selectedDate: formatAgendaDate(item.agenda?.fecha_inicio),
+        selectedTime: formatAgendaTime(item.agenda?.fecha_inicio),
+        selectedEndTime: formatAgendaTime(item.agenda?.fecha_fin),
+      };
+    }),
+  };
+}
+
 export async function getPedidosCompradorApi(): Promise<Order[]> {
   const data = await api<{
     status: string;
-    pedidos: Array<{
-      id: number;
-      folio: string;
-      fecha: string;
-      total: number;
-      estado: string;
-      direccion: any;
-      metodo_pago: any;
-      items: Array<{
-        id: number;
-        tipo: string;
-        nombre: string;
-        cantidad: number;
-        precio: number;
-        subtotal: number;
-        imagen: string | null;
-      }>;
-    }>;
+    pedidos: RawPedidoComprador[];
   }>("/comprador/mis-pedidos");
 
-  return data.pedidos.map((p) => ({
-    id: String(p.id),
-    folio: p.folio,
-    date: p.fecha
-      ? new Date(p.fecha).toISOString().split("T")[0]
-      : new Date().toISOString().split("T")[0],
-    total: Number(p.total) || 0,
-    status: p.estado ?? "Pendiente",
-    buyerName: "",
-    buyerId: "",
-    address: p.direccion
-      ? `${p.direccion.calle ?? ""}, ${p.direccion.ciudad ?? ""}, ${p.direccion.estado ?? ""} ${p.direccion.codigo_postal ?? ""}, ${p.direccion.pais ?? ""}`
-      : "",
-    paymentMethod: p.metodo_pago
-      ? `${p.metodo_pago.proveedor_pago ?? "Tarjeta"} ****${p.metodo_pago.ultimos_cuatro ?? ""}`
-      : undefined,
-    items: p.items.map((item) => ({
-      product: {
-        id: String(item.id),
-        name: item.nombre,
-        description: "",
-        price: Number(item.precio) || 0,
-        image: item.imagen ?? "https://placehold.co/400x400?text=Producto",
-        images: [],
-        category: "general",
-        rating: 0,
-        reviewCount: 0,
-        stock: 0,
-        sellerId: "0",
-        sellerName: "",
-        reviews: [],
-        type: item.tipo as "producto" | "servicio",
-        status: "Aprobado" as const,
-      },
-      quantity: Number(item.cantidad) || 1,
-    })),
-  }));
+  return data.pedidos.map(mapPedidoComprador);
 }
 
 export interface ResumenCompras {
@@ -792,7 +897,16 @@ export interface RawVendorOrder {
   total: number;
   status: string;
   address: any;
-  items: Array<{ id: number; type: string; name: string; quantity: number; price: number; subtotal: number }>;
+  cupon?: OrderCoupon | OrderCoupon[] | null;
+  items: Array<{
+    id: number;
+    type: string;
+    name: string;
+    quantity: number;
+    price: number;
+    subtotal: number;
+    agenda?: null | { id_agenda: number; fecha_inicio: string; fecha_fin: string; estado: string };
+  }>;
 }
 
 /**
@@ -954,8 +1068,61 @@ export async function getServiciosVendedorApi(idNegocio: number) {
       fecha_registro: string;
       id_categoria?: number | null;
       imagen_principal?: string | null;
+      horarios_disponibles?: number;
+      proximo_horario?: string | null;
     }>
   >(`/api/vendedor/servicios/${idNegocio}`);
+}
+
+export interface SellerAgendaSlot {
+  id: number;
+  id_servicio: number;
+  fecha_hora_inicio: string;
+  fecha_hora_fin: string;
+  estado: string;
+  id_usuario_cliente?: number | null;
+  cliente?: { id: number; nombre: string; email: string } | null;
+}
+
+export async function getAgendaServicioVendedorApi(idServicio: number) {
+  const data = await api<{ status: string; agenda: SellerAgendaSlot[] }>(
+    `/api/vendedor/servicios/${idServicio}/agenda`
+  );
+  return data.agenda;
+}
+
+export async function createAgendaServicioVendedorApi(
+  idServicio: number,
+  datos: { fecha_hora_inicio: string; fecha_hora_fin: string }
+) {
+  const data = await api<{ status: string; agenda: SellerAgendaSlot }>(
+    `/api/vendedor/servicios/${idServicio}/agenda`,
+    {
+      method: "POST",
+      body: JSON.stringify(datos),
+    }
+  );
+  return data.agenda;
+}
+
+export async function updateAgendaVendedorApi(
+  idAgenda: number,
+  datos: { fecha_hora_inicio: string; fecha_hora_fin: string }
+) {
+  const data = await api<{ status: string; agenda: SellerAgendaSlot }>(
+    `/api/vendedor/agenda/${idAgenda}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(datos),
+    }
+  );
+  return data.agenda;
+}
+
+export async function deleteAgendaVendedorApi(idAgenda: number) {
+  return api<{ status: string; mensaje: string }>(`/api/vendedor/agenda/${idAgenda}`, {
+    method: "DELETE",
+  });
 }
 
 /**
@@ -1026,26 +1193,40 @@ export async function updateServicioCategoriasVendedorApi(id: number, idCategori
 /**
  * GET /api/vendedor/negocio
  */
+export interface VendedorNegocio {
+  id: number;
+  id_usuario: number;
+  nombre_comercial: string;
+  rfc_tax_id: string | null;
+  logo_url?: string | null;
+  direccion: {
+    id: number;
+    calle: string;
+    ciudad: string;
+    estado: string;
+    codigo_postal: string;
+    pais: string;
+    latitud: number;
+    longitud: number;
+  };
+}
+
+export interface VendedorNegocioPayload {
+  nombre_comercial: string;
+  rfc_tax_id?: string;
+  calle: string;
+  ciudad: string;
+  estado: string;
+  codigo_postal: string;
+  pais: string;
+  latitud: number;
+  longitud: number;
+}
+
 export async function getNegocioVendedorApi() {
   return api<{
     status: string;
-    negocio: {
-      id: number;
-      id_usuario: number;
-      nombre_comercial: string;
-      rfc_tax_id: string | null;
-      logo_url: string | null;
-      direccion: {
-        id: number;
-        calle: string;
-        ciudad: string;
-        estado: string;
-        codigo_postal: string;
-        pais: string;
-        latitud: number;
-        longitud: number;
-      }
-    }
+    negocio: VendedorNegocio;
   }>("/api/vendedor/negocio");
 }
 
@@ -1074,19 +1255,8 @@ export async function createNegocioVendedorApi(datos: {
  * PUT /api/vendedor/negocio
  * Actualiza los datos del negocio existente.
  */
-export async function updateNegocioVendedorApi(datos: {
-  nombre_comercial: string;
-  rfc_tax_id?: string;
-  logo_url?: string;
-  calle: string;
-  ciudad: string;
-  estado: string;
-  codigo_postal: string;
-  pais: string;
-  latitud: number;
-  longitud: number;
-}) {
-  return api<{ status: string; mensaje: string; negocio: any }>("/api/vendedor/negocio", {
+export async function updateNegocioVendedorApi(datos: VendedorNegocioPayload) {
+  return api<{ status: string; mensaje: string; negocio: VendedorNegocio }>("/api/vendedor/negocio", {
     method: "PUT",
     body: JSON.stringify(datos),
   });
@@ -1173,7 +1343,8 @@ export async function getServiciosConDescuentoApi(): Promise<Product[]> {
  * Detalle de un pedido individual del comprador.
  */
 export async function getPedidoDetalleCompradorApi(pedidoId: string | number) {
-  return api<{ status: string; pedido: any }>(`/comprador/mis-pedidos/${pedidoId}`);
+  const data = await api<{ status: string; pedido: RawPedidoComprador }>(`/comprador/mis-pedidos/${pedidoId}`);
+  return mapPedidoComprador(data.pedido);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1275,8 +1446,12 @@ export function mapEstadoReporteToBack(estadoFront: string): string {
 export interface RawReporteAdmin {
   id: number;
   id_usuario: number;
+  id_usuario_reportante?: number;
+  reportante?: { id: number; nombre: string; email: string } | null;
   id_negocio: number;
   negocio: string;
+  id_usuario_reportado?: number;
+  usuario_reportado?: { id: number; nombre: string; email: string } | null;
   id_producto: number | null;
   id_servicio: number | null;
   tipo_objetivo: "producto" | "servicio";
@@ -1323,10 +1498,9 @@ export async function advertenciaReporteApi(id: number) {
 }
 
 /** POST /admin/reportes/:id/suspension */
-export async function suspensionReporteApi(id: number, dias: number) {
+export async function suspensionReporteApi(id: number) {
   return api<{ status: string; mensaje: string }>(`/admin/reportes/${id}/suspension`, {
     method: "POST",
-    body: JSON.stringify({ dias }),
   });
 }
 
@@ -1473,17 +1647,6 @@ export async function createCategoriaVendedorApi(datos: {
     body: JSON.stringify(datos),
   });
 }
-
-/**
- * GET /api/vendedor/categorias/check
- * Verifica si ya existe una categoría con ese nombre y tipo.
- */
-export async function checkCategoriaUniquenessApi(nombre: string, tipo: string) {
-  return api<{ exists: boolean }>(
-    `/api/vendedor/categorias/check?nombre=${encodeURIComponent(nombre)}&tipo=${encodeURIComponent(tipo)}`
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // WISHLIST (requiere sesión activa)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1526,11 +1689,25 @@ export async function getWishlistItemsApi() {
       id_servicio: number | null;
       fecha_agregado: string;
       producto_nombre: string | null;
+      producto_descripcion: string | null;
       producto_precio: number | null;
+      producto_stock: number | null;
+      producto_calificacion: number | null;
       producto_activo: boolean | null;
+      producto_imagen: string | null;
+      producto_id_negocio: number | null;
+      producto_vendedor: string | null;
+      producto_categoria: string | null;
       servicio_nombre: string | null;
+      servicio_descripcion: string | null;
       servicio_precio: number | null;
+      servicio_calificacion: number | null;
       servicio_activo: boolean | null;
+      servicio_imagen: string | null;
+      servicio_id_negocio: number | null;
+      servicio_vendedor: string | null;
+      servicio_categoria: string | null;
+      servicio_horarios_disponibles: number | null;
     }>;
   }>("/comprador/wishlist/items");
 }

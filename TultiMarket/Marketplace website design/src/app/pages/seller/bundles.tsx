@@ -114,7 +114,7 @@ export function SellerBundlesPage() {
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 600 }}>Paquetes Promocionales</h1>
           <p className="text-muted-foreground mt-1" style={{ fontSize: 14 }}>
-            Combina productos reales de tu catalogo en ofertas para vender mas facil.
+            Combina productos reales de tu catálogo en ofertas para vender más fácil.
           </p>
         </div>
         <button

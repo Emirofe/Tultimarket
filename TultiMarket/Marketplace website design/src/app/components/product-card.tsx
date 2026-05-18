@@ -1,5 +1,5 @@
-import { Heart, ShoppingCart } from "lucide-react";
-import { Link } from "react-router";
+import { CalendarDays, Heart, ShoppingCart } from "lucide-react";
+import { Link, useNavigate } from "react-router";
 import { Product } from "../data/mock-data";
 import { StarRating } from "./star-rating";
 import { useStore } from "../context/store-context";
@@ -11,20 +11,35 @@ interface ProductCardProps {
 
 export function ProductCard({ product }: ProductCardProps) {
   const { addToCart, addToWishlist, removeFromWishlist, isInWishlist } = useStore();
-  const inWishlist = isInWishlist(product.id);
+  const inWishlist = isInWishlist(product.id, product.type ?? "producto");
+  const navigate = useNavigate();
+  const hasDiscount =
+    product.originalPrice != null && product.originalPrice > product.price;
+  const discountPercent = hasDiscount
+    ? product.discountPercent ?? Math.round(((product.originalPrice! - product.price) / product.originalPrice!) * 100)
+    : 0;
 
-  const handleAddToCart = (e: React.MouseEvent) => {
+  const handleAddToCart = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    addToCart(product);
-    toast.success(`${product.name} agregado al carrito`);
+    if (product.type === "servicio") {
+      navigate(`/producto/${product.id}?type=servicio`);
+      return;
+    }
+
+    try {
+      await addToCart(product);
+      toast.success(`${product.name} agregado al carrito`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo agregar al carrito");
+    }
   };
 
   const handleToggleWishlist = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (inWishlist) {
-      removeFromWishlist(product.id);
+      removeFromWishlist(product.id, product.type ?? "producto");
       toast("Eliminado de lista de deseos");
     } else {
       addToWishlist(product);
@@ -51,9 +66,9 @@ export function ProductCard({ product }: ProductCardProps) {
         >
           <Heart size={18} className={inWishlist ? "fill-current" : ""} />
         </button>
-        {product.originalPrice && (
+        {hasDiscount && (
           <div className="absolute top-3 left-3 bg-red-500 text-white px-2 py-0.5 rounded-md" style={{ fontSize: 12 }}>
-            -{Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100)}%
+            -{Math.round(discountPercent)}%
           </div>
         )}
         {product.stock < 10 && product.stock > 0 && (
@@ -76,19 +91,25 @@ export function ProductCard({ product }: ProductCardProps) {
           <span className="text-primary" style={{ fontSize: 20, fontWeight: 700 }}>
             ${product.price.toFixed(2)}
           </span>
-          {product.originalPrice && (
+          {hasDiscount && (
             <span className="text-muted-foreground line-through" style={{ fontSize: 13 }}>
-              ${product.originalPrice.toFixed(2)}
+              ${product.originalPrice!.toFixed(2)}
             </span>
           )}
         </div>
+        {product.type === "servicio" && (
+          <div className="flex items-center gap-1.5 text-muted-foreground mb-3" style={{ fontSize: 12 }}>
+            <CalendarDays size={14} />
+            <span className="line-clamp-1">{product.availability ?? "Consulta horarios disponibles"}</span>
+          </div>
+        )}
         <button
           onClick={handleAddToCart}
           className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground py-2.5 rounded-lg hover:bg-primary/90 transition-colors"
           style={{ fontSize: 14 }}
         >
           <ShoppingCart size={16} />
-          Agregar al carrito
+          {product.type === "servicio" ? "Ver horarios" : "Agregar al carrito"}
         </button>
       </div>
     </Link>

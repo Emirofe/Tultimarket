@@ -65,6 +65,37 @@ function createVendedorOrdersRouter({ pool }) {
 		return negocio.rows[0].id;
 	};
 
+	function construirResumenCuponDesdeItems(items) {
+		const cupones = new Map();
+
+		for (const item of items) {
+			const cupon = item?.snapshot?.cupon || null;
+			if (!cupon?.codigo_cupon) continue;
+
+			const codigo = String(cupon.codigo_cupon).trim().toUpperCase();
+			if (!codigo) continue;
+
+			const actual = cupones.get(codigo) || {
+				codigo_cupon: codigo,
+				porcentaje_descuento: Number(cupon.porcentaje_descuento) || 0,
+				descuento_aplicado: 0,
+				items_afectados: 0,
+			};
+
+			actual.descuento_aplicado += Number(cupon.descuento_aplicado) || 0;
+			actual.items_afectados += 1;
+			cupones.set(codigo, actual);
+		}
+
+		const resumenes = Array.from(cupones.values()).map((cupon) => ({
+			...cupon,
+			descuento_aplicado: Number(cupon.descuento_aplicado.toFixed(2)),
+		}));
+
+		if (resumenes.length === 0) return null;
+		return resumenes.length === 1 ? resumenes[0] : resumenes;
+	}
+
 	// Lista pedidos que contienen items del negocio autenticado.
 	router.get("/api/vendedor/pedidos", requireVendedorAuth, async (req, res) => {
 		try {
@@ -87,10 +118,15 @@ function createVendedorOrdersRouter({ pool }) {
 					dp.cantidad,
 					dp.precio_unitario_historico,
 					dp.snapshot_item,
+					dp.id_agenda_seleccionada,
+					ag.fecha_hora_inicio,
+					ag.fecha_hora_fin,
+					ag.estado AS agenda_estado,
 					prod.nombre AS producto_nombre,
 					srv.nombre AS servicio_nombre
 				FROM pedidos p
 				JOIN detalle_pedido dp ON p.id = dp.id_pedido
+				LEFT JOIN agenda_servicios ag ON dp.id_agenda_seleccionada = ag.id
 				LEFT JOIN productos prod ON dp.id_producto = prod.id
 				LEFT JOIN servicios srv ON dp.id_servicio = srv.id
 				JOIN usuarios u ON p.id_usuario = u.id
@@ -113,6 +149,7 @@ function createVendedorOrdersRouter({ pool }) {
 						total: parseFloat(row.total),
 						status: row.estado_pedido,
 						address: row.direccion_envio_snapshot,
+						cupon: null,
 						items: [],
 					});
 				}
@@ -128,12 +165,25 @@ function createVendedorOrdersRouter({ pool }) {
 					price: parseFloat(row.precio_unitario_historico),
 					subtotal: parseFloat(row.precio_unitario_historico) * Number(row.cantidad),
 					snapshot: row.snapshot_item,
-				});
+					agenda: row.id_agenda_seleccionada
+						? {
+							id_agenda: row.id_agenda_seleccionada,
+							fecha_inicio: row.fecha_hora_inicio,
+							fecha_fin: row.fecha_hora_fin,
+							estado: row.agenda_estado,
+						}
+						: null,
+					});
+			}
+
+			const pedidos = Array.from(pedidosMap.values());
+			for (const pedido of pedidos) {
+				pedido.cupon = construirResumenCuponDesdeItems(pedido.items);
 			}
 
 			return res.json({
 				status: "success",
-				pedidos: Array.from(pedidosMap.values()),
+				pedidos,
 			});
 		} catch (error) {
 			console.error("Error al obtener pedidos:", error);
@@ -224,6 +274,56 @@ function createVendedorOrdersRouter({ pool }) {
 					[estadoNormalizado, pedidoId]
 				);
 
+				if (estadoNormalizado === "CANCELADO") {
+					const itemsProducto = await client.query(
+						`SELECT id_producto, cantidad
+						 FROM detalle_pedido
+						 WHERE id_pedido = $1
+						   AND id_producto IS NOT NULL`,
+						[pedidoId]
+					);
+
+					for (const item of itemsProducto.rows) {
+						const lote = await client.query(
+							`SELECT id
+							 FROM lotes_inventario
+							 WHERE id_producto = $1
+							   AND fecha_caducidad >= CURRENT_DATE
+							 ORDER BY fecha_caducidad DESC
+							 LIMIT 1`,
+							[item.id_producto]
+						);
+
+						if (lote.rows.length > 0) {
+							await client.query(
+								`UPDATE lotes_inventario
+								 SET stock_disponible = stock_disponible + $1
+								 WHERE id = $2`,
+								[item.cantidad, lote.rows[0].id]
+							);
+						} else {
+							await client.query(
+								`INSERT INTO lotes_inventario (id_producto, stock_disponible, fecha_recibido, fecha_caducidad)
+								 VALUES ($1, $2, CURRENT_DATE, CURRENT_DATE + INTERVAL '1 year')`,
+								[item.id_producto, item.cantidad]
+							);
+						}
+					}
+
+					await client.query(
+						`UPDATE agenda_servicios
+						 SET estado = 'disponible',
+						     id_usuario_cliente = NULL
+						 WHERE id IN (
+						   SELECT dp.id_agenda_seleccionada
+						   FROM detalle_pedido dp
+						   WHERE dp.id_pedido = $1
+						     AND dp.id_agenda_seleccionada IS NOT NULL
+						 )`,
+						[pedidoId]
+					);
+				}
+
 				await client.query("COMMIT");
 			} catch (txError) {
 				await client.query("ROLLBACK");
@@ -255,6 +355,7 @@ function createVendedorOrdersRouter({ pool }) {
 				LEFT JOIN productos prod ON dp.id_producto = prod.id
 				LEFT JOIN servicios srv ON dp.id_servicio = srv.id
 				WHERE (prod.id_negocio = $1 OR srv.id_negocio = $1)
+				  AND p.estado_pedido != 'CANCELADO'
 				GROUP BY p.estado_pedido`,
 				[negocioId]
 			);
@@ -269,6 +370,7 @@ function createVendedorOrdersRouter({ pool }) {
 				LEFT JOIN productos prod ON dp.id_producto = prod.id
 				LEFT JOIN servicios srv ON dp.id_servicio = srv.id
 				WHERE (prod.id_negocio = $1 OR srv.id_negocio = $1)
+					AND p.estado_pedido != 'CANCELADO'
 					AND p.fecha_pedido >= NOW() - INTERVAL '6 months'
 				GROUP BY DATE_TRUNC('month', p.fecha_pedido)
 				ORDER BY mes DESC`,

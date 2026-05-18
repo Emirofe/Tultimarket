@@ -49,8 +49,16 @@ function createAdminReportesRouter({ pool }) {
     return {
       id: row.id,
       id_usuario: row.id_usuario,
+      id_usuario_reportante: row.id_usuario,
+      reportante: row.reportante_nombre
+        ? { id: row.id_usuario, nombre: row.reportante_nombre, email: row.reportante_email }
+        : null,
       id_negocio: row.id_negocio,
       negocio: row.nombre_comercial,
+      id_usuario_reportado: row.id_usuario_reportado,
+      usuario_reportado: row.usuario_reportado_nombre
+        ? { id: row.id_usuario_reportado, nombre: row.usuario_reportado_nombre, email: row.usuario_reportado_email }
+        : null,
       id_producto: row.id_producto,
       id_servicio: row.id_servicio,
       tipo_objetivo: row.id_producto ? "producto" : "servicio",
@@ -62,6 +70,45 @@ function createAdminReportesRouter({ pool }) {
       fecha_creacion: row.fecha_creacion,
       fecha_resolucion: row.fecha_resolucion,
     };
+  }
+
+  const ESTADOS_FINALES = new Set([
+    "RESUELTO",
+    "DESESTIMADO",
+    "ADVERTENCIA_FORMAL",
+    "SUSPENSION_TEMPORAL",
+    "BLOQUEO_PERMANENTE",
+    "CONTENIDO_ELIMINADO",
+  ]);
+
+  async function obtenerReporteParaAccion(client, id, bloquear = false) {
+    const result = await client.query(
+      `SELECT
+         r.id,
+         r.id_usuario AS id_usuario_reportante,
+         r.id_negocio,
+         r.id_producto,
+         r.id_servicio,
+         r.estado_reporte,
+         n.id_usuario AS id_usuario_reportado
+       FROM reportes r
+       INNER JOIN negocios n ON n.id = r.id_negocio
+       WHERE r.id = $1
+       LIMIT 1
+       ${bloquear ? "FOR UPDATE OF r" : ""}`,
+      [id]
+    );
+
+    return result.rows[0] || null;
+  }
+
+  function validarReporteProcesable(reporte) {
+    const estadoActual = String(reporte.estado_reporte || "").toUpperCase();
+    if (ESTADOS_FINALES.has(estadoActual)) {
+      const error = new Error(`El reporte ya fue procesado con estado ${estadoActual}`);
+      error.statusCode = 409;
+      throw error;
+    }
   }
 
   // Lista todos los reportes (admin)
@@ -84,11 +131,18 @@ function createAdminReportesRouter({ pool }) {
            r.fecha_resolucion,
            p.nombre AS nombre_producto,
            s.nombre AS nombre_servicio,
-           n.nombre_comercial
+           n.nombre_comercial,
+           n.id_usuario AS id_usuario_reportado,
+           ur.nombre AS reportante_nombre,
+           ur.email AS reportante_email,
+           uv.nombre AS usuario_reportado_nombre,
+           uv.email AS usuario_reportado_email
          FROM reportes r
          LEFT JOIN productos p ON p.id = r.id_producto
          LEFT JOIN servicios s ON s.id = r.id_servicio
          INNER JOIN negocios n ON n.id = r.id_negocio
+         INNER JOIN usuarios ur ON ur.id = r.id_usuario
+         INNER JOIN usuarios uv ON uv.id = n.id_usuario
          ORDER BY r.fecha_creacion DESC, r.id DESC`
       );
 
@@ -127,11 +181,18 @@ function createAdminReportesRouter({ pool }) {
            r.fecha_resolucion,
            p.nombre AS nombre_producto,
            s.nombre AS nombre_servicio,
-           n.nombre_comercial
+           n.nombre_comercial,
+           n.id_usuario AS id_usuario_reportado,
+           ur.nombre AS reportante_nombre,
+           ur.email AS reportante_email,
+           uv.nombre AS usuario_reportado_nombre,
+           uv.email AS usuario_reportado_email
          FROM reportes r
          LEFT JOIN productos p ON p.id = r.id_producto
          LEFT JOIN servicios s ON s.id = r.id_servicio
          INNER JOIN negocios n ON n.id = r.id_negocio
+         INNER JOIN usuarios ur ON ur.id = r.id_usuario
+         INNER JOIN usuarios uv ON uv.id = n.id_usuario
          WHERE r.id = $1
          LIMIT 1`,
         [id]
@@ -224,6 +285,11 @@ function createAdminReportesRouter({ pool }) {
       return res.status(400).json({ status: "error", mensaje: "razon es obligatoria" });
 
     try {
+      const reporteActual = await obtenerReporteParaAccion(pool, id);
+      if (!reporteActual)
+        return res.status(404).json({ status: "error", mensaje: "Reporte no encontrado" });
+      validarReporteProcesable(reporteActual);
+
       const result = await pool.query(
         `UPDATE reportes
          SET estado_reporte = 'DESESTIMADO',
@@ -245,6 +311,9 @@ function createAdminReportesRouter({ pool }) {
       });
     } catch (error) {
       console.error(error);
+      if (error.statusCode) {
+        return res.status(error.statusCode).json({ status: "error", mensaje: error.message });
+      }
       return res.status(500).json({ status: "error", mensaje: "Error al desestimar reporte" });
     }
   });
@@ -259,15 +328,13 @@ function createAdminReportesRouter({ pool }) {
       return res.status(400).json({ status: "error", mensaje: "id invalido" });
 
     try {
-      const reporteResult = await pool.query(
-        `SELECT id_usuario FROM reportes WHERE id = $1 LIMIT 1`,
-        [id]
-      );
+      const reporteActual = await obtenerReporteParaAccion(pool, id);
 
-      if (reporteResult.rows.length === 0)
+      if (!reporteActual)
         return res.status(404).json({ status: "error", mensaje: "Reporte no encontrado" });
 
-      const idUsuario = reporteResult.rows[0].id_usuario;
+      validarReporteProcesable(reporteActual);
+      const idUsuarioReportado = reporteActual.id_usuario_reportado;
 
       const updateResult = await pool.query(
         `UPDATE reportes
@@ -280,49 +347,48 @@ function createAdminReportesRouter({ pool }) {
 
       return res.status(200).json({
         status: "success",
-        mensaje: "Advertencia formal registrada en historial",
+        mensaje: "Advertencia formal registrada para el vendedor reportado",
         accion: "ADVERTENCIA_FORMAL",
-        usuario_notificado: idUsuario,
+        usuario_notificado: idUsuarioReportado,
+        usuario_reportante: reporteActual.id_usuario_reportante,
         reporte: updateResult.rows[0],
       });
     } catch (error) {
       console.error(error);
+      if (error.statusCode) {
+        return res.status(error.statusCode).json({ status: "error", mensaje: error.message });
+      }
       return res.status(500).json({ status: "error", mensaje: "Error al registrar advertencia" });
     }
   });
 
-  // Suspensión temporal (cuenta inactiva X días)
+  // Suspensión temporal (desactiva la cuenta; el admin puede reactivarla desde el panel de usuarios)
   router.post("/admin/reportes/:id/suspension", async (req, res) => {
     const adminId = await requireActiveAdminSession(req, res);
     if (!adminId) return;
 
     const id = Number(req.params.id);
-    const dias = Number(req.body?.dias || 0);
     if (!Number.isInteger(id) || id <= 0)
       return res.status(400).json({ status: "error", mensaje: "id invalido" });
-    if (!Number.isInteger(dias) || dias <= 0)
-      return res.status(400).json({ status: "error", mensaje: "dias debe ser un numero positivo" });
 
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      const reporteResult = await client.query(
-        `SELECT id_usuario FROM reportes WHERE id = $1 LIMIT 1`,
-        [id]
-      );
+      const reporteActual = await obtenerReporteParaAccion(client, id, true);
 
-      if (reporteResult.rows.length === 0) {
+      if (!reporteActual) {
         await client.query("ROLLBACK");
         return res.status(404).json({ status: "error", mensaje: "Reporte no encontrado" });
       }
 
-      const idUsuario = reporteResult.rows[0].id_usuario;
+      validarReporteProcesable(reporteActual);
+      const idUsuarioReportado = reporteActual.id_usuario_reportado;
 
-      // Desactivar la cuenta del usuario reportado
+      // Desactivar la cuenta del vendedor reportado (sin marcarla como eliminada)
       await client.query(
         `UPDATE usuarios SET activo = FALSE WHERE id = $1`,
-        [idUsuario]
+        [idUsuarioReportado]
       );
 
       const updateResult = await client.query(
@@ -338,16 +404,18 @@ function createAdminReportesRouter({ pool }) {
 
       return res.status(200).json({
         status: "success",
-        mensaje: `Cuenta suspendida por ${dias} días`,
+        mensaje: "Cuenta del vendedor suspendida temporalmente",
         accion: "SUSPENSION_TEMPORAL",
-        usuario_suspendido: idUsuario,
-        duracion_dias: dias,
-        fecha_reactivacion: new Date(Date.now() + dias * 24 * 60 * 60 * 1000).toISOString(),
+        usuario_suspendido: idUsuarioReportado,
+        usuario_reportante: reporteActual.id_usuario_reportante,
         reporte: updateResult.rows[0],
       });
     } catch (error) {
       await client.query("ROLLBACK");
       console.error(error);
+      if (error.statusCode) {
+        return res.status(error.statusCode).json({ status: "error", mensaje: error.message });
+      }
       return res.status(500).json({ status: "error", mensaje: "Error al aplicar suspension" });
     } finally {
       client.release();
@@ -370,22 +438,20 @@ function createAdminReportesRouter({ pool }) {
     try {
       await client.query("BEGIN");
 
-      const reporteResult = await client.query(
-        `SELECT id_usuario FROM reportes WHERE id = $1 LIMIT 1`,
-        [id]
-      );
+      const reporteActual = await obtenerReporteParaAccion(client, id, true);
 
-      if (reporteResult.rows.length === 0) {
+      if (!reporteActual) {
         await client.query("ROLLBACK");
         return res.status(404).json({ status: "error", mensaje: "Reporte no encontrado" });
       }
 
-      const idUsuario = reporteResult.rows[0].id_usuario;
+      validarReporteProcesable(reporteActual);
+      const idUsuarioReportado = reporteActual.id_usuario_reportado;
 
-      // Bloquear la cuenta del usuario permanentemente
+      // Bloquear la cuenta del vendedor reportado permanentemente
       await client.query(
         `UPDATE usuarios SET activo = FALSE, fecha_eliminacion = NOW() WHERE id = $1`,
-        [idUsuario]
+        [idUsuarioReportado]
       );
 
       const updateResult = await client.query(
@@ -401,15 +467,19 @@ function createAdminReportesRouter({ pool }) {
 
       return res.status(200).json({
         status: "success",
-        mensaje: "Cuenta bloqueada permanentemente y dispositivos baneados",
+        mensaje: "Cuenta del vendedor bloqueada permanentemente",
         accion: "BLOQUEO_PERMANENTE",
-        usuario_bloqueado: idUsuario,
+        usuario_bloqueado: idUsuarioReportado,
+        usuario_reportante: reporteActual.id_usuario_reportante,
         razon,
         reporte: updateResult.rows[0],
       });
     } catch (error) {
       await client.query("ROLLBACK");
       console.error(error);
+      if (error.statusCode) {
+        return res.status(error.statusCode).json({ status: "error", mensaje: error.message });
+      }
       return res.status(500).json({ status: "error", mensaje: "Error al aplicar bloqueo" });
     } finally {
       client.release();
@@ -432,21 +502,17 @@ function createAdminReportesRouter({ pool }) {
     try {
       await client.query("BEGIN");
 
-      const reporteResult = await client.query(
-        `SELECT id_usuario, id_producto, id_servicio FROM reportes WHERE id = $1 LIMIT 1`,
-        [id]
-      );
+      const reporteActual = await obtenerReporteParaAccion(client, id, true);
 
-      if (reporteResult.rows.length === 0) {
+      if (!reporteActual) {
         await client.query("ROLLBACK");
         return res.status(404).json({ status: "error", mensaje: "Reporte no encontrado" });
       }
 
-      const {
-        id_usuario: idUsuario,
-        id_producto: idProducto,
-        id_servicio: idServicio,
-      } = reporteResult.rows[0];
+      validarReporteProcesable(reporteActual);
+      const idUsuarioReportado = reporteActual.id_usuario_reportado;
+      const idProducto = reporteActual.id_producto;
+      const idServicio = reporteActual.id_servicio;
 
       const tipo_objetivo = idProducto ? "producto" : "servicio";
       const id_objetivo = idProducto || idServicio;
@@ -479,7 +545,8 @@ function createAdminReportesRouter({ pool }) {
         status: "success",
         mensaje: "Contenido eliminado sin afectar la cuenta",
         accion: "CONTENIDO_ELIMINADO",
-        usuario: idUsuario,
+        usuario: idUsuarioReportado,
+        usuario_reportante: reporteActual.id_usuario_reportante,
         tipo_objetivo,
         id_objetivo,
         razon,
@@ -488,6 +555,9 @@ function createAdminReportesRouter({ pool }) {
     } catch (error) {
       await client.query("ROLLBACK");
       console.error(error);
+      if (error.statusCode) {
+        return res.status(error.statusCode).json({ status: "error", mensaje: error.message });
+      }
       return res.status(500).json({ status: "error", mensaje: "Error al eliminar contenido" });
     } finally {
       client.release();

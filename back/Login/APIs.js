@@ -50,9 +50,10 @@ function createLoginRouter({ pool }) {
         return res.status(401).json({ mensaje: "Contraseña incorrecta" });
       }
 
+      const rolNormalizado = String(usuario.nombre_rol || "").toLowerCase();
       req.session.usuario = usuario.nombre;
       req.session.usuario_id = usuario.id;
-      req.session.rol = usuario.nombre_rol.toLowerCase();
+      req.session.rol = rolNormalizado;
 
       return res.status(200).json({
         mensaje: "Sesion iniciada correctamente",
@@ -60,7 +61,7 @@ function createLoginRouter({ pool }) {
           id: usuario.id,
           nombre: usuario.nombre,
           email: usuario.email,
-          rol: usuario.nombre_rol,
+          rol: rolNormalizado,
           id_negocio: usuario.id_negocio || null,
         },
       });
@@ -89,7 +90,10 @@ function createLoginRouter({ pool }) {
     const nombreFinal = (nombre || nombre_usuario || "").trim();
     const emailFinal = (email || correo || "").trim().toLowerCase();
     const passwordPlano = contrasena || password;
-    const rolSolicitado = id_rol;
+    const rolSolicitado =
+      id_rol === undefined || id_rol === null || id_rol === ""
+        ? (String(tipo_usuario || "").toLowerCase() === "vendedor" ? 2 : 1)
+        : Number(id_rol);
 
     try {
       if (!nombreFinal || !emailFinal || !passwordPlano) {  //#Sugeto a cambios por el front
@@ -98,9 +102,9 @@ function createLoginRouter({ pool }) {
         });
       }
 
-      if (rolSolicitado && ![1, 2, 3].includes(rolSolicitado)) {
+      if (!Number.isInteger(rolSolicitado) || ![1, 2].includes(rolSolicitado)) {
         return res.status(400).json({
-          mensaje: "Rol solicitado no es válido",
+          mensaje: "Rol solicitado no es valido para registro publico",
         });
       }
 
@@ -134,8 +138,9 @@ function createLoginRouter({ pool }) {
 
   // Logout
   router.post("/logout", (req, res) => {
-    req.session.destroy();
-    res.redirect("/login");
+    req.session.destroy(() => {
+      res.status(200).json({ mensaje: "Sesion cerrada correctamente" });
+    });
   });
 
   return router;

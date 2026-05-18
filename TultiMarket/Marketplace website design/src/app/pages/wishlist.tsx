@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { Heart, ShoppingCart, Trash2 } from "lucide-react";
+import { CalendarDays, Heart, ShoppingCart, Trash2 } from "lucide-react";
 import { useStore } from "../context/store-context";
 import { Navbar } from "../components/layout/navbar";
 import { Footer } from "../components/layout/footer";
@@ -32,14 +32,14 @@ export function WishlistPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {wishlist.map((product) => (
-              <div key={product.id} className="bg-white rounded-xl border border-border overflow-hidden">
-                <Link to={`/producto/${product.id}`} className="block">
+              <div key={`${product.type ?? "producto"}:${product.id}`} className="bg-white rounded-xl border border-border overflow-hidden">
+                <Link to={`/producto/${product.id}${product.type === "servicio" ? "?type=servicio" : ""}`} className="block">
                   <div className="aspect-square bg-gray-50">
                     <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
                   </div>
                 </Link>
                 <div className="p-4">
-                  <Link to={`/producto/${product.id}`} className="hover:text-primary transition-colors">
+                  <Link to={`/producto/${product.id}${product.type === "servicio" ? "?type=servicio" : ""}`} className="hover:text-primary transition-colors">
                     <h3 className="line-clamp-2 mb-2" style={{ fontSize: 14 }}>{product.name}</h3>
                   </Link>
                   <StarRating rating={product.rating} size={14} />
@@ -47,11 +47,23 @@ export function WishlistPage() {
                     ${(Number(product.price) || 0).toFixed(2)}
                   </p>
                   <div className="flex items-center gap-2">
-                    {product.stock > 0 ? (
+                    {product.type === "servicio" ? (
+                      <Link
+                        to={`/producto/${product.id}?type=servicio`}
+                        className="flex-1 flex items-center justify-center gap-2 bg-primary text-white py-2.5 rounded-lg hover:bg-primary/90 transition-colors"
+                        style={{ fontSize: 14 }}
+                      >
+                        <CalendarDays size={16} /> Ver agenda
+                      </Link>
+                    ) : product.stock > 0 ? (
                       <button
-                        onClick={() => {
-                          addToCart(product);
-                          toast.success("Agregado al carrito");
+                        onClick={async () => {
+                          try {
+                            await addToCart(product);
+                            toast.success("Agregado al carrito");
+                          } catch (error) {
+                            toast.error(error instanceof Error ? error.message : "No se pudo agregar al carrito");
+                          }
                         }}
                         className="flex-1 flex items-center justify-center gap-2 bg-primary text-white py-2.5 rounded-lg hover:bg-primary/90 transition-colors"
                         style={{ fontSize: 14 }}
@@ -63,7 +75,7 @@ export function WishlistPage() {
                     )}
                     <button
                       onClick={() => {
-                        removeFromWishlist(product.id);
+                        removeFromWishlist(product.id, product.type ?? "producto");
                         toast("Eliminado de la lista");
                       }}
                       className="p-2.5 border border-border rounded-lg text-red-500 hover:bg-red-50 transition-colors"
