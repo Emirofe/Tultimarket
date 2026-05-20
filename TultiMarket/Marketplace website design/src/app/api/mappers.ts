@@ -22,7 +22,7 @@ import type {
 // ─── URL base del servidor de backend ────────────────────────────────────────
 // Usa el mismo hostname del frontend para que las URLs de imagen sean consistentes.
 const API_HOST = typeof window !== "undefined" ? window.location.hostname : "localhost";
-const API_BASE = `http://${API_HOST}:3000`;
+const API_BASE = (import.meta.env.VITE_API_URL || `http://${API_HOST}:3000`).replace(/\/$/, "");
 
 /** Convierte la imagen_principal relativa del back en una URL completa. */
 export function toImageUrl(path: string | null | undefined): string {
@@ -88,6 +88,7 @@ export interface RawProductoLista {
   porcentaje_descuento?: number | null;
   imagen_principal: string | null;
   empresa: string;
+  id_negocio?: number | null;
   numero_resenas: number;
   horarios_disponibles?: number | null;
   proximo_horario_inicio?: string | null;
@@ -108,6 +109,7 @@ export interface RawServicioDetalle {
   imagen_principal: string | null;
   galeria_imagenes: Array<{ id: number; url_imagen: string; es_principal: boolean; orden_visual: number }> | null;
   empresa: string;
+  id_negocio: number | null;
   numero_resenas: number;
   categorias: string[];
   resenas: RawResena[];
@@ -302,10 +304,11 @@ export function mapProductoLista(raw: RawProductoLista): Product {
     rating: raw.calificacion ?? 0,
     reviewCount: raw.numero_resenas,
     stock: 0,                  // la lista no trae stock
-    sellerId: "0",
+    sellerId: raw.id_negocio ? String(raw.id_negocio) : "0",
     sellerName: raw.empresa,
     reviews: [],
     type: "producto",
+    businessId: raw.id_negocio ? String(raw.id_negocio) : undefined,
     availability:
       horariosDisponibles !== undefined
         ? horariosDisponibles > 0
@@ -338,7 +341,7 @@ export function mapServicioDetalle(raw: RawServicioDetalle): Product {
     rating: raw.calificacion ?? 0,
     reviewCount: raw.numero_resenas,
     stock: 99,                 // los servicios no tienen stock tradicional
-    sellerId: "0",
+    sellerId: raw.id_negocio ? String(raw.id_negocio) : "0",
     sellerName: raw.empresa,
     reviews: raw.resenas.map(mapResena),
     type: "servicio",
@@ -358,6 +361,7 @@ export function mapServicioDetalle(raw: RawServicioDetalle): Product {
     publicationDate: raw.fecha_registro
       ? new Date(raw.fecha_registro).toISOString().split("T")[0]
       : undefined,
+    businessId: raw.id_negocio ? String(raw.id_negocio) : undefined,
   };
 }
 

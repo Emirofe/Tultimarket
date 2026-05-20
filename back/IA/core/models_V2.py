@@ -4,10 +4,6 @@ from datetime import datetime
 
 @dataclass
 class CategoriaDB:
-    """
-    Refleja exactamente la tabla 'categorias' de PostgreSQL.
-    La jerarquía se construye con id_padre (autorreferencial).
-    """
     id: int
     nombre_categoria: str
     id_padre: Optional[int]       # None = categoría raíz
@@ -21,8 +17,7 @@ class CategoriaDB:
 @dataclass
 class ProductoDB:
     """
-    Refleja exactamente la tabla 'productos' de PostgreSQL.
-    Las categorías asociadas vienen de la tabla producto_categoria (N:N).
+    Tabla 'productos' de la Base de Datos.
     """
     id: int
     id_negocio: int
@@ -53,7 +48,6 @@ class ProductoDB:
 
     @property
     def texto_busqueda(self) -> str:
-        """Texto completo para búsqueda semántica (reemplaza los 'tags' ausentes)."""
         partes = [self.nombre]
         if self.descripcion:
             partes.append(self.descripcion)
@@ -65,7 +59,7 @@ class ProductoDB:
 @dataclass
 class ServicioDB:
     """
-    Refleja exactamente la tabla 'servicios' de PostgreSQL.
+    Tabla 'servicios' de la Base de Datos.
     """
     id: int
     id_negocio: int
@@ -94,7 +88,7 @@ class ServicioDB:
 @dataclass
 class ItemCatalogo:
     """
-    Abstracción unificada que usa el motor de IA.
+    Abstracción que usa el motor de IA.
     Puede representar un Producto o un Servicio.
     """
     item_id: str           # "P-{id}" para producto, "S-{id}" para servicio
@@ -108,8 +102,10 @@ class ItemCatalogo:
     ids_categorias: list[int]
     nombre_negocio: str
     descuento_porcentaje: Optional[float]
+    imagen_principal: Optional[str] = None  # ruta relativa de la imagen
     interacciones_recientes: int = 0    # solo para productos
     duracion_minutos: Optional[int] = None  # solo para servicios
+    stock: Optional[int] = None
 
     @property
     def precio_final(self) -> float:
@@ -139,6 +135,7 @@ class ItemCatalogo:
             nombre_negocio=p.nombre_negocio,
             descuento_porcentaje=p.descuento_porcentaje,
             interacciones_recientes=p.interacciones_recientes,
+            stock=p.stock_total,
         )
 
     @classmethod
@@ -156,12 +153,13 @@ class ItemCatalogo:
             nombre_negocio=s.nombre_negocio,
             descuento_porcentaje=s.descuento_porcentaje,
             duracion_minutos=s.duracion_minutos,
+            stock=None,
         )
 
 @dataclass
 class SugerenciaCantidad:
     """
-    Registro que se guarda en la tabla sugerencias_ia de PostgreSQL.
+    Registro sacado que se guarda en la tabla sugerencias_ia de en la Base de Datos.
     """
     item_id: str                   # "P-{id}" o "S-{id}"
     tipo_item: str                 # "producto" | "servicio"
@@ -191,7 +189,9 @@ class ItemSugerido:
     calificacion: float
     descuento_porcentaje: Optional[float]
     nombre_negocio: str
+    imagen_principal: Optional[str] = None   # ruta relativa de la imagen
     duracion_minutos: Optional[int] = None   # solo servicios
+    stock: Optional[int] = None
 
 
 @dataclass

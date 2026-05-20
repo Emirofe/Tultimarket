@@ -81,19 +81,30 @@ CANTIDADES_IMPLICITAS = {
 }
 
 TEMATICAS = [
-    "spiderman", "spider-man", "spider man", "hombre araña",
+    # Superhéroes — variantes completas primero para que coincidan antes que parciales
+    "super héroes", "super heroes", "superhéroes", "superheroes",
+    "héroe", "heroes", "héroes", "heroe",
+    "spiderman", "spider-man", "spider man", "hombre araña", "hombre arana",
     "batman", "superman", "wonder woman", "avengers", "vengadores",
-    "iron man", "capitan america", "hulk", "thor",
+    "iron man", "capitan america", "capitán américa", "hulk", "thor",
+    "liga de la justicia", "dc comics", "marvel",
+    # Disney / Princesas
     "frozen", "elsa", "moana", "rapunzel", "cenicienta",
     "princesas", "disney", "mickey", "minnie",
     "toy story", "woody", "cars", "rayo mcqueen",
     "nemo", "coco", "encanto",
+    # Naturaleza / Animales
     "unicornio", "unicornios", "dinosaurio", "dinosaurios", "safari",
+    # Deportes
     "futbol", "fútbol", "soccer", "basketball",
+    # Videojuegos / Anime
     "minecraft", "fortnite", "pokemon", "pokémon", "mario bros", "sonic",
+    # Temáticas generales
     "luau", "hawaiana", "tropical",
     "vaquero", "cowboy", "espacio", "galaxia",
     "ciencia", "arte",
+    "pirata", "piratas",
+    "princesa",
 ]
 
 PALABRAS_SERVICIO = [
@@ -225,10 +236,6 @@ class ExtractorEntidades:
         return e
 
     def obtener_categorias_objetivo(self, e: EntidadesPrompt) -> list[str]:
-        """
-        Devuelve la lista de nombres de categorías de la BD que aplican
-        para las entidades detectadas.
-        """
         categorias = set()
 
         # Por tipo de evento
@@ -319,7 +326,15 @@ class ExtractorEntidades:
             "le","nos","les","si","no","ya","hay","esto","esta","ese","esa","muy",
             "mas","más","tan","va","voy","tengo","quiero","necesito","busco",
             "quisiera","pensando","hacer","organizar","celebrar","tener","será",
-            "sera","son","fue",
+            "sera","son","fue","porque","porqué","asi","así","solo","sólo",
+            "personas","persona","invitados","invitado","gente","pax","chicos",
+            "chicas","adultos","adulto","niños","niño","niñas","niña","ninos",
+            "nino","ninas","nina","jovenes","joven","bebes","bebe","bebés",
+            "bebé","asistentes","asistente","amigos","amigo","celebracion",
+            "celebración","evento","eventos","fiesta","fiestas","boda","bodas",
+            "cumpleaños","cumple","planear","plan","organización","organizacion",
+            "temática", "tematica", "temáticas", "tematicas", "tema", "temas",
+            "super","superhéroes","superheroes","hero","héroe","heroes","héroes"
         }
         ya_cap = set()
         if e.tipo_evento:
@@ -327,12 +342,13 @@ class ExtractorEntidades:
         for t in e.tematica:
             ya_cap.add(t.lower())
 
-        palabras = re.findall(r'\b[a-záéíóúüñ]{4,}\b', texto)
+        palabras = re.findall(r'\b[a-záéíóúüñ]{5,}\b', texto)
         clave, vistas = [], set()
         for p in palabras:
-            if p not in stopwords and p not in ya_cap and p not in vistas:
-                clave.append(p)
-                vistas.add(p)
+            if p in stopwords or p in ya_cap or p in vistas:
+                continue
+            clave.append(p)
+            vistas.add(p)
         return clave[:8]
 
     def _calcular_confianza(self, e: EntidadesPrompt) -> float:

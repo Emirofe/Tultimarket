@@ -1,4 +1,5 @@
 const express = require("express");
+const { crearNotificacion } = require("../Usuario/notificaciones-helper");
 
 function createVendedorOrdersRouter({ pool }) {
 	const router = express.Router();
@@ -330,6 +331,31 @@ function createVendedorOrdersRouter({ pool }) {
 				throw txError;
 			} finally {
 				client.release();
+			}
+
+			// ── Notificar al comprador sobre el cambio de estado (fire-and-forget) ──
+			const estadoLabels = {
+				"EN PREPARACION": { titulo: "Pedido en preparacion", emoji: "📦" },
+				"ENVIADO": { titulo: "Pedido enviado", emoji: "🚚" },
+				"ENTREGADO": { titulo: "Pedido entregado", emoji: "\u2705" },
+				"CANCELADO": { titulo: "Pedido cancelado", emoji: "\u274c" },
+			};
+			const label = estadoLabels[estadoNormalizado];
+			if (label) {
+				pool.query(
+					"SELECT id_usuario FROM pedidos WHERE id = $1",
+					[pedidoId]
+				).then((pedidoInfo) => {
+					if (pedidoInfo.rows.length > 0) {
+						crearNotificacion(pool, {
+							id_usuario: pedidoInfo.rows[0].id_usuario,
+							tipo: `pedido_${estadoNormalizado.toLowerCase().replace(/ /g, "_")}`,
+							titulo: `${label.emoji} ${label.titulo}`,
+							mensaje: `Tu pedido fue actualizado a: ${estadoNormalizado}.`,
+							datos_extra: { pedido_id: pedidoId, url: `/mis-compras/${pedidoId}` },
+						});
+					}
+				}).catch((err) => console.error("[notif] Error:", err.message));
 			}
 
 			return res.json({ status: "success", mensaje: "Estado del pedido actualizado correctamente" });

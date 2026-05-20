@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useSearchParams, Link } from "react-router";
-import { ChevronLeft, ChevronRight, SlidersHorizontal, X, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, SlidersHorizontal, X, Loader2, Sparkles } from "lucide-react";
 import { type Product } from "../data/mock-data";
 import {
   getCategoriasApi,
@@ -14,6 +14,8 @@ import {
 import { ProductCard } from "../components/product-card";
 import { Navbar } from "../components/layout/navbar";
 import { Footer } from "../components/layout/footer";
+import { iaService, type IAHomeCarousel } from "../services/ia-service";
+import { useStore } from "../context/store-context";
 
 const bannerImages = [
   {
@@ -77,6 +79,11 @@ export function HomePage() {
   const [minRating, setMinRating] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
 
+  // ─── IA Recomendador Home ───────────────────────────────────────────────────
+  const { currentUser, isLoggedIn } = useStore();
+  const [iaCarousels, setIaCarousels] = useState<IAHomeCarousel[]>([]);
+  const [isLoadingIA, setIsLoadingIA] = useState(false);
+
   // ─── Estado de datos ──────────────────────────────────────────────────────
   const [products, setProducts] = useState<Product[]>([]);
   const [discountedItems, setDiscountedItems] = useState<Product[]>([]);
@@ -131,6 +138,34 @@ export function HomePage() {
       })
       .catch(() => setDiscountedItems([]));
   }, []);
+
+  // ─── Cargar recomendaciones IA del home cuando hay usuario logueado ────────
+  useEffect(() => {
+    if (!isLoggedIn || !currentUser) {
+      setIaCarousels([]);
+      return;
+    }
+    setIsLoadingIA(true);
+    iaService
+      .getHomeRecommendations(Number(currentUser.id), 5)
+      .then((carousels) => setIaCarousels(carousels))
+      .catch(() => setIaCarousels([]))
+      .finally(() => setIsLoadingIA(false));
+  }, [isLoggedIn, currentUser]);
+
+  const iaRecommendations = useMemo(() => {
+    const allProducts = iaCarousels.flatMap((c) => c.products);
+    const uniqueProducts: Product[] = [];
+    const seen = new Set<string>();
+    for (const product of allProducts) {
+      const key = `${product.type}-${product.id}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueProducts.push(product);
+      }
+    }
+    return uniqueProducts;
+  }, [iaCarousels]);
 
   // ─── Derivar los 3 niveles de la jerarquía ─────────────────────────────────
   const rootCategories = useMemo(
@@ -358,7 +393,42 @@ export function HomePage() {
         </section>
       )}
 
-      {!selectedLevel1 && !searchFilter && topRated.length > 0 && (
+      {/* ═══════════ RECOMENDACIONES IA PERSONALIZADAS (usuario logueado) ═══════════ */}
+      {!selectedLevel1 && !searchFilter && isLoggedIn && iaRecommendations.length > 0 && (
+        <section className="max-w-7xl mx-auto px-4 pb-8 w-full">
+          <div className="flex items-center gap-2 mb-6">
+            <Sparkles size={20} className="text-amber-500" />
+            <h2 style={{ fontSize: 22, fontWeight: 600 }}>
+              Recomendado para ti
+            </h2>
+            <span
+              className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium"
+              style={{ backgroundColor: "#fef3c7", color: "#92400e" }}
+            >
+              IA
+            </span>
+          </div>
+          <style>{`
+            .no-scrollbar::-webkit-scrollbar {
+              display: none;
+            }
+            .no-scrollbar {
+              -ms-overflow-style: none;
+              scrollbar-width: none;
+            }
+          `}</style>
+          <div className="flex overflow-x-auto pb-4 gap-4 snap-x snap-mandatory no-scrollbar">
+            {iaRecommendations.map((product) => (
+              <div key={`${product.type}-${product.id}`} className="w-[280px] shrink-0 snap-start">
+                <ProductCard product={product} />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Mejor Calificados (fallback cuando no hay IA o no está logueado) */}
+      {!selectedLevel1 && !searchFilter && (!isLoggedIn || iaRecommendations.length === 0) && topRated.length > 0 && (
         <section className="max-w-7xl mx-auto px-4 pb-8 w-full">
           <h2 className="mb-6" style={{ fontSize: 22, fontWeight: 600 }}>
             Mejor Calificados

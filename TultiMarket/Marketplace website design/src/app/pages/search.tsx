@@ -67,7 +67,7 @@ export function SearchPage() {
       <Navbar />
 
       {/* Buscador Contextual */}
-      <ContextualSearch catalog={catalogItems} onResultsFound={handleResultsFound} />
+      <ContextualSearch onResultsFound={handleResultsFound} />
 
       {/* Resultados */}
       {searchResults.length > 0 && contextAnalysis && (

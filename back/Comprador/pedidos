@@ -375,9 +375,9 @@ function createCompradorPedidosRouter({ pool }) {
 
 			const stats = await pool.query(
 				`SELECT
-					COUNT(*) AS total_pedidos,
-					SUM(total) AS total_gastado,
-					AVG(total) AS promedio_compra,
+					COUNT(*) FILTER (WHERE estado_pedido <> 'CANCELADO') AS total_pedidos,
+					SUM(total) FILTER (WHERE estado_pedido <> 'CANCELADO') AS total_gastado,
+					AVG(total) FILTER (WHERE estado_pedido <> 'CANCELADO') AS promedio_compra,
 					COUNT(CASE WHEN estado_pedido = 'ENTREGADO' THEN 1 END) AS pedidos_entregados,
 					COUNT(CASE WHEN estado_pedido = 'CANCELADO' THEN 1 END) AS pedidos_cancelados
 				 FROM pedidos
@@ -393,6 +393,7 @@ function createCompradorPedidosRouter({ pool }) {
 				 FROM detalle_pedido dp
 				 INNER JOIN pedidos p ON dp.id_pedido = p.id
 				 WHERE p.id_usuario = $1
+				   AND p.estado_pedido <> 'CANCELADO'
 				   AND dp.id_producto IS NOT NULL
 				 GROUP BY COALESCE(dp.snapshot_item->>'nombre', 'Item sin nombre')
 				 ORDER BY veces_comprado DESC
@@ -407,6 +408,7 @@ function createCompradorPedidosRouter({ pool }) {
 					SUM(total) AS total_mes
 				 FROM pedidos
 				 WHERE id_usuario = $1
+				   AND estado_pedido <> 'CANCELADO'
 				   AND fecha_pedido >= NOW() - INTERVAL '12 months'
 				 GROUP BY DATE_TRUNC('month', fecha_pedido)
 				 ORDER BY mes DESC`,

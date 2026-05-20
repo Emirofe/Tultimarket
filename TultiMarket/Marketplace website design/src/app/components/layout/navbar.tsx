@@ -19,6 +19,7 @@ import {
 import { useStore } from "../../context/store-context";
 import { type Product } from "../../data/mock-data";
 import { getAllProductosApi, getServiciosGlobalApi, getTopCategoriasApi } from "../../api/api-client";
+import { NotificationBell } from "./notification-bell";
 
 export function Navbar() {
   const { currentUser, isLoggedIn, logout, getCartCount, wishlist } = useStore();
@@ -64,9 +65,9 @@ export function Navbar() {
       window.clearTimeout(timer);
     };
   }, [searchQuery]);
+
   const navigate = useNavigate();
   const cartCount = getCartCount();
-
   const suggestions = catalogSuggestions;
 
   const handleSearch = (e: React.FormEvent) => {
@@ -87,8 +88,8 @@ export function Navbar() {
   return (
     <header className="sticky top-0 z-50 bg-gradient-to-r from-[#121E2B] to-[#1E2C3E] text-white shadow-lg">
       {/* Top bar */}
-      <div className="max-w-7xl mx-auto px-4">
-        <div className="flex items-center gap-4 h-16">
+      <div className="max-w-7xl mx-auto pl-15 pr-4">
+        <div className="flex items-center gap-6 h-16">
           {/* Logo */}
           <Link to="/" className="flex items-center gap-2 shrink-0">
             <Store size={28} className="text-amber-400" />
@@ -119,12 +120,13 @@ export function Navbar() {
               <button
                 type="submit"
                 className="bg-amber-400 hover:bg-amber-300 px-4 text-[#121E2B] transition-colors"
+                aria-label="Buscar"
               >
                 <Search size={20} />
               </button>
             </div>
 
-            {/* Autocomplete suggestions */}
+            {/* Search suggestions dropdown */}
             {showSuggestions && suggestions.length > 0 && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-xl border border-border overflow-hidden z-50">
                 {suggestions.map((product) => (
@@ -154,69 +156,82 @@ export function Navbar() {
           {/* Desktop nav icons */}
           <div className="hidden md:flex items-center gap-1">
             {isLoggedIn ? (
-              <div className="relative">
-                <button
-                  onClick={() => setShowUserMenu(!showUserMenu)}
-                  className="flex items-center gap-1 px-3 py-2 rounded-lg hover:bg-white/10 transition-colors"
-                  style={{ fontSize: 14 }}
-                >
-                  <User size={20} />
-                  <span className="max-w-[100px] truncate">{currentUser?.name}</span>
-                  <ChevronDown size={14} />
-                </button>
-                {showUserMenu && (
-                  <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-lg shadow-xl border border-border py-2 z-50">
-                    <Link
-                      to="/perfil"
-                      className="flex items-center gap-2 px-4 py-2 text-foreground hover:bg-gray-50"
-                      style={{ fontSize: 14 }}
-                      onClick={() => setShowUserMenu(false)}
-                    >
-                      <User size={16} /> Mi Cuenta
-                    </Link>
-                    <Link
-                      to="/mis-compras"
-                      className="flex items-center gap-2 px-4 py-2 text-foreground hover:bg-gray-50"
-                      style={{ fontSize: 14 }}
-                      onClick={() => setShowUserMenu(false)}
-                    >
-                      <Package size={16} /> Mis Compras
-                    </Link>
-                    {currentUser?.role === "vendedor" && (
+              <>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowUserMenu(!showUserMenu)}
+                    className="flex items-center gap-1 px-2 py-2 rounded-lg hover:bg-white/10 transition-colors"
+                    style={{ fontSize: 14 }}
+                    aria-label="Menu de usuario"
+                  >
+                    <User size={20} />
+                    <ChevronDown size={14} />
+                  </button>
+                  {showUserMenu && (
+                    <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-lg shadow-xl border border-border py-2 z-50">
+                      <div className="px-4 py-2 border-b border-border">
+                        <p className="text-foreground font-semibold" style={{ fontSize: 13 }}>
+                          {currentUser?.name}
+                        </p>
+                        <p className="text-muted-foreground" style={{ fontSize: 11 }}>
+                          {currentUser?.email}
+                        </p>
+                      </div>
                       <Link
-                        to="/vendedor/productos"
+                        to="/perfil"
                         className="flex items-center gap-2 px-4 py-2 text-foreground hover:bg-gray-50"
                         style={{ fontSize: 14 }}
                         onClick={() => setShowUserMenu(false)}
                       >
-                        <Settings size={16} /> Panel Vendedor
+                        <User size={16} /> Mi Cuenta
                       </Link>
-                    )}
-                    {currentUser?.role === "admin" && (
                       <Link
-                        to="/admin/usuarios"
+                        to="/mis-compras"
                         className="flex items-center gap-2 px-4 py-2 text-foreground hover:bg-gray-50"
                         style={{ fontSize: 14 }}
                         onClick={() => setShowUserMenu(false)}
                       >
-                        <Settings size={16} /> Panel Admin
+                        <Package size={16} /> Mis Compras
                       </Link>
-                    )}
-                    <hr className="my-2 border-border" />
-                    <button
-                      onClick={() => {
-                        logout();
-                        setShowUserMenu(false);
-                        navigate("/");
-                      }}
-                      className="flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-gray-50 w-full"
-                      style={{ fontSize: 14 }}
-                    >
-                      <LogOut size={16} /> Cerrar Sesion
-                    </button>
-                  </div>
-                )}
-              </div>
+                      {currentUser?.role === "vendedor" && (
+                        <Link
+                          to="/vendedor/productos"
+                          className="flex items-center gap-2 px-4 py-2 text-foreground hover:bg-gray-50"
+                          style={{ fontSize: 14 }}
+                          onClick={() => setShowUserMenu(false)}
+                        >
+                          <Settings size={16} /> Panel Vendedor
+                        </Link>
+                      )}
+                      {currentUser?.role === "admin" && (
+                        <Link
+                          to="/admin/usuarios"
+                          className="flex items-center gap-2 px-4 py-2 text-foreground hover:bg-gray-50"
+                          style={{ fontSize: 14 }}
+                          onClick={() => setShowUserMenu(false)}
+                        >
+                          <Settings size={16} /> Panel Admin
+                        </Link>
+                      )}
+                      <hr className="my-2 border-border" />
+                      <button
+                        onClick={() => {
+                          logout();
+                          setShowUserMenu(false);
+                          navigate("/");
+                        }}
+                        className="flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-gray-50 w-full"
+                        style={{ fontSize: 14 }}
+                      >
+                        <LogOut size={16} /> Cerrar Sesion
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* 🔔 Notification Bell */}
+                <NotificationBell />
+              </>
             ) : (
               <Link
                 to="/login"

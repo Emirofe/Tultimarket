@@ -35,7 +35,7 @@ import type { Product, User, Address, PaymentMethod, Order, OrderCoupon } from "
 // URL base del backend. Usa el mismo hostname del frontend para que la cookie
 // de sesion no se pierda entre localhost y 127.0.0.1.
 const API_HOST = typeof window !== "undefined" ? window.location.hostname : "localhost";
-const BASE_URL = `http://${API_HOST}:3000`;
+const BASE_URL = (import.meta.env.VITE_API_URL || `http://${API_HOST}:3000`).replace(/\/$/, "");
 
 // ─── Helper: fetch con credentials incluidas ─────────────────────────────────
 async function api<T>(
@@ -1870,6 +1870,69 @@ export async function removeDescuentoProductoApi(idProducto: number, idDescuento
 export async function removeDescuentoServicioApi(idServicio: number, idDescuento: number) {
   return api<{ mensaje: string; servicio_id: number; descuento_removido: number }>(
     `/api/vendedor/servicios/${idServicio}/descuentos/${idDescuento}`,
+    { method: "DELETE" }
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTIFICACIONES IN-APP
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Notificación del backend */
+export interface Notificacion {
+  id: number;
+  tipo: string;
+  titulo: string;
+  mensaje: string;
+  leida: boolean;
+  datos_extra: { url?: string; pedido_id?: number; [key: string]: any };
+  fecha_creacion: string;
+}
+
+/** Respuesta del GET /usuario/notificaciones */
+export interface NotificacionesResponse {
+  status: string;
+  notificaciones: Notificacion[];
+  no_leidas: number;
+}
+
+/**
+ * GET /usuario/notificaciones
+ * Obtiene las últimas 50 notificaciones + conteo de no leídas.
+ */
+export async function getNotificacionesApi() {
+  return api<NotificacionesResponse>("/usuario/notificaciones");
+}
+
+/**
+ * PUT /usuario/notificaciones/:id/leer
+ * Marca una notificación como leída.
+ */
+export async function marcarNotificacionLeidaApi(id: number) {
+  return api<{ status: string; mensaje: string }>(
+    `/usuario/notificaciones/${id}/leer`,
+    { method: "PUT" }
+  );
+}
+
+/**
+ * PUT /usuario/notificaciones/leer-todas
+ * Marca todas las notificaciones como leídas.
+ */
+export async function marcarTodasLeidasApi() {
+  return api<{ status: string; mensaje: string }>(
+    "/usuario/notificaciones/leer-todas",
+    { method: "PUT" }
+  );
+}
+
+/**
+ * DELETE /usuario/notificaciones/:id
+ * Elimina una notificación.
+ */
+export async function eliminarNotificacionApi(id: number) {
+  return api<{ status: string; mensaje: string }>(
+    `/usuario/notificaciones/${id}`,
     { method: "DELETE" }
   );
 }

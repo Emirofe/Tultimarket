@@ -36,6 +36,8 @@ export function ProductDetailPage() {
     addToWishlist,
     removeFromWishlist,
     isInWishlist,
+    currentUser,
+    negocioId,
   } = useStore();
 
   const [product, setProduct] = useState<Product | null>(null);
@@ -148,11 +150,21 @@ export function ProductDetailPage() {
   }
 
   const inWishlist = isInWishlist(product.id, product.type ?? "producto");
+  const isOwnListing = Boolean(
+    currentUser?.role === "vendedor" &&
+    negocioId &&
+    (product.businessId === String(negocioId) || product.sellerId === String(negocioId))
+  );
   // TODO: Agregar endpoint de productos relacionados / bundles en el backend
   const sellerBundles: any[] = [];
   const relatedProducts: Product[] = [];
 
   const handleAddToCart = async () => {
+    if (isOwnListing) {
+      toast.error("No puedes comprar tus propios productos o servicios");
+      return;
+    }
+
     if (isService) {
       const selectedSlot = product.agendaSlots?.find((slot) => slot.id === selectedAgendaId);
       if (!selectedSlot) {
@@ -447,15 +459,20 @@ export function ProductDetailPage() {
               )}
 
               {/* Actions */}
+              {isOwnListing && (
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-700" style={{ fontSize: 14 }}>
+                  Esta publicacion pertenece a tu negocio.
+                </div>
+              )}
               <div className="flex gap-3 mb-6">
                 <button
                   onClick={handleAddToCart}
-                  disabled={(!isService && product.stock === 0) || (isService && (!product.agendaSlots || product.agendaSlots.length === 0))}
+                  disabled={isOwnListing || (!isService && product.stock === 0) || (isService && (!product.agendaSlots || product.agendaSlots.length === 0))}
                   className="flex-1 flex items-center justify-center gap-2 bg-primary text-white py-3.5 rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{ fontSize: 16, fontWeight: 600 }}
                 >
                   <ShoppingCart size={20} />
-                  {isService ? "Agendar y Agregar" : "Agregar al Carrito"}
+                  {isOwnListing ? "Es tu publicacion" : isService ? "Agendar y Agregar" : "Agregar al Carrito"}
                 </button>
                 <button
                   onClick={handleToggleWishlist}

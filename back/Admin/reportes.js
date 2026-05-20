@@ -1,4 +1,6 @@
 const express = require("express");
+const { intentarEnviarCorreos } = require("./mail");
+const { crearNotificacion } = require("../Usuario/notificaciones-helper");
 
 function createAdminReportesRouter({ pool }) {
   const router = express.Router();
@@ -100,6 +102,146 @@ function createAdminReportesRouter({ pool }) {
     );
 
     return result.rows[0] || null;
+  }
+
+  function escapeHtml(valor) {
+    return String(valor ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function construirTicketReporte(idReporte) {
+    return `RPT-${String(idReporte).padStart(6, "0")}`;
+  }
+
+  async function obtenerContextoNotificacionReporte(id) {
+    const result = await pool.query(
+      `SELECT
+         r.id,
+         r.id_usuario AS id_usuario_reportante,
+         r.id_negocio,
+         r.id_producto,
+         r.id_servicio,
+         r.motivo,
+         r.descripcion,
+         r.estado_reporte,
+         r.fecha_creacion,
+         r.fecha_resolucion,
+         ur.nombre AS reportante_nombre,
+         ur.email AS reportante_email,
+         n.nombre_comercial,
+         n.id_usuario AS id_usuario_reportado,
+         uv.nombre AS usuario_reportado_nombre,
+         uv.email AS usuario_reportado_email,
+         p.nombre AS nombre_producto,
+         s.nombre AS nombre_servicio
+       FROM reportes r
+       INNER JOIN negocios n ON n.id = r.id_negocio
+       INNER JOIN usuarios ur ON ur.id = r.id_usuario
+       INNER JOIN usuarios uv ON uv.id = n.id_usuario
+       LEFT JOIN productos p ON p.id = r.id_producto
+       LEFT JOIN servicios s ON s.id = r.id_servicio
+       WHERE r.id = $1
+       LIMIT 1`,
+      [id]
+    );
+
+    return result.rows[0] || null;
+  }
+
+  function obtenerTituloAccion(accion) {
+    const titulos = {
+      RESUELTO: "Reporte resuelto",
+      DESESTIMADO: "Reporte desestimado",
+      ADVERTENCIA_FORMAL: "Advertencia formal aplicada",
+      SUSPENSION_TEMPORAL: "Suspension temporal aplicada",
+      BLOQUEO_PERMANENTE: "Bloqueo permanente aplicado",
+      CONTENIDO_ELIMINADO: "Contenido eliminado",
+    };
+
+    return titulos[accion] || `Reporte actualizado a ${accion}`;
+  }
+
+  function debeNotificarReportado(accion) {
+    return [
+      "ADVERTENCIA_FORMAL",
+      "SUSPENSION_TEMPORAL",
+      "BLOQUEO_PERMANENTE",
+      "CONTENIDO_ELIMINADO",
+    ].includes(accion);
+  }
+
+  function construirMensajeAccion(contexto, accion, opciones = {}) {
+    const ticket = construirTicketReporte(contexto.id);
+    const titulo = obtenerTituloAccion(accion);
+    const tipoObjetivo = contexto.id_producto ? "Producto" : "Servicio";
+    const nombreObjetivo = contexto.nombre_producto || contexto.nombre_servicio || "Sin nombre";
+    const razon = String(opciones.razon || "").trim();
+    const duracion = String(opciones.duracion || "").trim();
+    const lineas = [
+      titulo,
+      "",
+      `Ticket: ${ticket}`,
+      `Estado: ${contexto.estado_reporte}`,
+      `Negocio: ${contexto.nombre_comercial || "N/D"}`,
+      `${tipoObjetivo}: ${nombreObjetivo}`,
+      `Motivo del reporte: ${contexto.motivo}`,
+      `Descripcion: ${contexto.descripcion || "Sin descripcion"}`,
+    ];
+
+    if (razon) lineas.push(`Razon de administracion: ${razon}`);
+    if (duracion) lineas.push(`Duracion: ${duracion}`);
+
+    const texto = lineas.join("\n");
+    const html =
+      `<p><strong>${escapeHtml(titulo)}</strong></p>` +
+      `<p><strong>Ticket:</strong> ${escapeHtml(ticket)}</p>` +
+      `<p><strong>Estado:</strong> ${escapeHtml(contexto.estado_reporte)}</p>` +
+      `<p><strong>Negocio:</strong> ${escapeHtml(contexto.nombre_comercial || "N/D")}</p>` +
+      `<p><strong>${escapeHtml(tipoObjetivo)}:</strong> ${escapeHtml(nombreObjetivo)}</p>` +
+      `<p><strong>Motivo del reporte:</strong> ${escapeHtml(contexto.motivo)}</p>` +
+      `<p><strong>Descripcion:</strong> ${escapeHtml(contexto.descripcion || "Sin descripcion")}</p>` +
+      (razon ? `<p><strong>Razon de administracion:</strong> ${escapeHtml(razon)}</p>` : "") +
+      (duracion ? `<p><strong>Duracion:</strong> ${escapeHtml(duracion)}</p>` : "");
+
+    return { subject: `[TultiMarket] ${titulo} ${ticket}`, text: texto, html };
+  }
+
+  async function notificarAccionReporte(id, accion, opciones = {}) {
+    const contexto = await obtenerContextoNotificacionReporte(id);
+    if (!contexto) {
+      return { total: 0, enviados: 0, fallidos: [], smtp_configurado: false };
+    }
+
+    const destinatarios = [contexto.reportante_email];
+    if (debeNotificarReportado(accion)) {
+      destinatarios.push(contexto.usuario_reportado_email);
+    }
+
+    const mensaje = construirMensajeAccion(contexto, accion, opciones);
+    return intentarEnviarCorreos({
+      to: destinatarios,
+      subject: mensaje.subject,
+      text: mensaje.text,
+      html: mensaje.html,
+    });
+  }
+
+  async function intentarNotificarAccionReporte(id, accion, opciones = {}) {
+    try {
+      return await notificarAccionReporte(id, accion, opciones);
+    } catch (error) {
+      console.error("No se pudo notificar accion de reporte:", error);
+      return {
+        total: 0,
+        enviados: 0,
+        fallidos: [{ email: null, error: String(error?.message || error) }],
+        smtp_configurado: false,
+      };
+    }
   }
 
   function validarReporteProcesable(reporte) {
@@ -233,10 +375,31 @@ function createAdminReportesRouter({ pool }) {
       if (result.rows.length === 0)
         return res.status(404).json({ status: "error", mensaje: "Reporte no encontrado" });
 
+      const notificacionCorreo = ESTADOS_FINALES.has(estado)
+        ? await intentarNotificarAccionReporte(id, estado)
+        : { total: 0, enviados: 0, fallidos: [], smtp_configurado: false };
+
+      // Notificación in-app al comprador que creó el reporte (fire-and-forget)
+      if (ESTADOS_FINALES.has(estado)) {
+        pool.query("SELECT id_usuario FROM reportes WHERE id = $1", [id])
+          .then((rptResult) => {
+            if (rptResult.rows.length > 0) {
+              crearNotificacion(pool, {
+                id_usuario: rptResult.rows[0].id_usuario,
+                tipo: "reporte_resuelto",
+                titulo: "Reporte atendido",
+                mensaje: `Tu reporte fue revisado. Estado: ${estado}.`,
+                datos_extra: { reporte_id: id, url: "/mis-reportes" },
+              });
+            }
+          }).catch((err) => console.error("[notif] Error:", err.message));
+      }
+
       return res.status(200).json({
         status: "success",
         mensaje: "Estado de reporte actualizado",
         reporte: result.rows[0],
+        notificacion_correo: notificacionCorreo,
       });
     } catch (error) {
       console.error(error);
@@ -302,12 +465,24 @@ function createAdminReportesRouter({ pool }) {
       if (result.rows.length === 0)
         return res.status(404).json({ status: "error", mensaje: "Reporte no encontrado" });
 
+      const notificacionCorreo = await intentarNotificarAccionReporte(id, "DESESTIMADO", { razon });
+
+      // Notificación in-app al comprador que creó el reporte
+      crearNotificacion(pool, {
+        id_usuario: result.rows[0].id_usuario,
+        tipo: "reporte_resuelto",
+        titulo: "Reporte revisado",
+        mensaje: `Tu reporte fue revisado y desestimado.`,
+        datos_extra: { reporte_id: id, url: "/mis-reportes" },
+      });
+
       return res.status(200).json({
         status: "success",
         mensaje: "Reporte desestimado",
         accion: "DESESTIMAR",
         razon,
         reporte: result.rows[0],
+        notificacion_correo: notificacionCorreo,
       });
     } catch (error) {
       console.error(error);
@@ -345,6 +520,17 @@ function createAdminReportesRouter({ pool }) {
         [id]
       );
 
+      const notificacionCorreo = await intentarNotificarAccionReporte(id, "ADVERTENCIA_FORMAL");
+
+      // Notificación in-app al comprador que creó el reporte
+      crearNotificacion(pool, {
+        id_usuario: reporteActual.id_usuario_reportante,
+        tipo: "reporte_resuelto",
+        titulo: "Reporte atendido",
+        mensaje: `Tu reporte fue atendido. Se emitio una advertencia formal al vendedor.`,
+        datos_extra: { reporte_id: id, url: "/mis-reportes" },
+      });
+
       return res.status(200).json({
         status: "success",
         mensaje: "Advertencia formal registrada para el vendedor reportado",
@@ -352,6 +538,7 @@ function createAdminReportesRouter({ pool }) {
         usuario_notificado: idUsuarioReportado,
         usuario_reportante: reporteActual.id_usuario_reportante,
         reporte: updateResult.rows[0],
+        notificacion_correo: notificacionCorreo,
       });
     } catch (error) {
       console.error(error);
@@ -402,6 +589,19 @@ function createAdminReportesRouter({ pool }) {
 
       await client.query("COMMIT");
 
+      const notificacionCorreo = await intentarNotificarAccionReporte(id, "SUSPENSION_TEMPORAL", {
+        duracion: "Temporal hasta que administracion reactive la cuenta",
+      });
+
+      // Notificación in-app al comprador que creó el reporte
+      crearNotificacion(pool, {
+        id_usuario: reporteActual.id_usuario_reportante,
+        tipo: "reporte_resuelto",
+        titulo: "Reporte atendido",
+        mensaje: `Tu reporte fue atendido. La cuenta del vendedor fue suspendida temporalmente.`,
+        datos_extra: { reporte_id: id, url: "/mis-reportes" },
+      });
+
       return res.status(200).json({
         status: "success",
         mensaje: "Cuenta del vendedor suspendida temporalmente",
@@ -409,6 +609,7 @@ function createAdminReportesRouter({ pool }) {
         usuario_suspendido: idUsuarioReportado,
         usuario_reportante: reporteActual.id_usuario_reportante,
         reporte: updateResult.rows[0],
+        notificacion_correo: notificacionCorreo,
       });
     } catch (error) {
       await client.query("ROLLBACK");
@@ -465,6 +666,17 @@ function createAdminReportesRouter({ pool }) {
 
       await client.query("COMMIT");
 
+      const notificacionCorreo = await intentarNotificarAccionReporte(id, "BLOQUEO_PERMANENTE", { razon });
+
+      // Notificación in-app al comprador que creó el reporte
+      crearNotificacion(pool, {
+        id_usuario: reporteActual.id_usuario_reportante,
+        tipo: "reporte_resuelto",
+        titulo: "Reporte atendido",
+        mensaje: `Tu reporte fue atendido. La cuenta del vendedor fue bloqueada permanentemente.`,
+        datos_extra: { reporte_id: id, url: "/mis-reportes" },
+      });
+
       return res.status(200).json({
         status: "success",
         mensaje: "Cuenta del vendedor bloqueada permanentemente",
@@ -473,6 +685,7 @@ function createAdminReportesRouter({ pool }) {
         usuario_reportante: reporteActual.id_usuario_reportante,
         razon,
         reporte: updateResult.rows[0],
+        notificacion_correo: notificacionCorreo,
       });
     } catch (error) {
       await client.query("ROLLBACK");
@@ -541,6 +754,17 @@ function createAdminReportesRouter({ pool }) {
 
       await client.query("COMMIT");
 
+      const notificacionCorreo = await intentarNotificarAccionReporte(id, "CONTENIDO_ELIMINADO", { razon });
+
+      // Notificación in-app al comprador que creó el reporte
+      crearNotificacion(pool, {
+        id_usuario: reporteActual.id_usuario_reportante,
+        tipo: "reporte_resuelto",
+        titulo: "Reporte atendido",
+        mensaje: `Tu reporte fue atendido. El contenido reportado fue retirado de la plataforma.`,
+        datos_extra: { reporte_id: id, tipo_objetivo, id_objetivo, url: "/mis-reportes" },
+      });
+
       return res.status(200).json({
         status: "success",
         mensaje: "Contenido eliminado sin afectar la cuenta",
@@ -551,6 +775,7 @@ function createAdminReportesRouter({ pool }) {
         id_objetivo,
         razon,
         reporte: updateResult.rows[0],
+        notificacion_correo: notificacionCorreo,
       });
     } catch (error) {
       await client.query("ROLLBACK");

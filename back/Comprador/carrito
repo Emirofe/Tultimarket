@@ -1,4 +1,5 @@
 const express = require("express");
+const { crearNotificacion } = require("../Usuario/notificaciones-helper");
 
 function createCompradorCarritoRouter({ pool }) {
 	const router = express.Router();
@@ -71,7 +72,7 @@ function createCompradorCarritoRouter({ pool }) {
 			   p.nombre AS nombre_producto,
 			   p.precio AS precio_producto_original,
 			   (SELECT pi.url_imagen FROM producto_imagenes pi WHERE pi.id_producto = p.id ORDER BY pi.es_principal DESC, pi.orden_visual ASC LIMIT 1) AS imagen_producto,
-			   p.stock_total AS stock_producto,
+			   LEAST(COALESCE(p.stock_total, 0), COALESCE(lp.stock_lotes, 0)) AS stock_producto,
 			   CASE
 			     WHEN dp.id IS NOT NULL
 			       AND dp.codigo_cupon IS NULL
@@ -99,6 +100,13 @@ function createCompradorCarritoRouter({ pool }) {
 			 LEFT JOIN productos p ON p.id = ci.id_producto
 			 LEFT JOIN descuentos dp ON dp.id = p.id_descuento
 			 LEFT JOIN negocios np ON np.id = p.id_negocio
+			 LEFT JOIN LATERAL (
+			   SELECT COALESCE(SUM(li.stock_disponible), 0)::int AS stock_lotes
+			   FROM lotes_inventario li
+			   WHERE li.id_producto = p.id
+			     AND li.stock_disponible > 0
+			     AND (li.fecha_caducidad IS NULL OR li.fecha_caducidad >= CURRENT_DATE)
+			 ) lp ON TRUE
 			 LEFT JOIN servicios s ON s.id = ci.id_servicio
 			 LEFT JOIN descuentos ds ON ds.id = s.id_descuento
 			 LEFT JOIN negocios ns ON ns.id = s.id_negocio
@@ -247,6 +255,133 @@ function createCompradorCarritoRouter({ pool }) {
 
 	function calcularPrecioConPorcentaje(precioBase, porcentaje) {
 		return Number((Number(precioBase || 0) * (1 - Number(porcentaje || 0) / 100)).toFixed(2));
+	}
+
+	function obtenerStockOperable(producto) {
+		const stockTotal = Number(producto?.stock_total || 0);
+		const stockLotes = Number(producto?.stock_lotes || 0);
+		return Math.max(0, Math.min(stockTotal, stockLotes));
+	}
+
+	async function obtenerStockProducto(client, idProducto) {
+		const result = await client.query(
+			`SELECT
+			   p.id,
+			   p.stock_total,
+			   p.esta_activo,
+			   COALESCE(l.stock_lotes, 0)::int AS stock_lotes
+			 FROM productos p
+			 LEFT JOIN LATERAL (
+			   SELECT COALESCE(SUM(li.stock_disponible), 0)::int AS stock_lotes
+			   FROM lotes_inventario li
+			   WHERE li.id_producto = p.id
+			     AND li.stock_disponible > 0
+			     AND (li.fecha_caducidad IS NULL OR li.fecha_caducidad >= CURRENT_DATE)
+			 ) l ON TRUE
+			 WHERE p.id = $1
+			 LIMIT 1`,
+			[idProducto]
+		);
+
+		return result.rows[0] || null;
+	}
+
+	async function validarNoCompraPropia(client, idUsuario, { idProducto = null, idServicio = null } = {}) {
+		let result;
+		if (idProducto !== null) {
+			result = await client.query(
+				`SELECT p.nombre
+				 FROM productos p
+				 INNER JOIN negocios n ON n.id = p.id_negocio
+				 WHERE p.id = $1
+				   AND n.id_usuario = $2
+				 LIMIT 1`,
+				[idProducto, idUsuario]
+			);
+		} else if (idServicio !== null) {
+			result = await client.query(
+				`SELECT s.nombre
+				 FROM servicios s
+				 INNER JOIN negocios n ON n.id = s.id_negocio
+				 WHERE s.id = $1
+				   AND n.id_usuario = $2
+				 LIMIT 1`,
+				[idServicio, idUsuario]
+			);
+		} else {
+			return;
+		}
+
+		if (result.rows.length > 0) {
+			const error = new Error("No puedes comprar tus propios productos o servicios");
+			error.statusCode = 403;
+			throw error;
+		}
+	}
+
+	async function validarCarritoSinComprasPropias(client, idUsuario) {
+		const result = await client.query(
+			`SELECT
+			   CASE WHEN ci.id_producto IS NOT NULL THEN 'producto' ELSE 'servicio' END AS tipo,
+			   COALESCE(p.nombre, s.nombre, 'item') AS nombre
+			 FROM carrito_items ci
+			 INNER JOIN carrito c ON c.id = ci.id_carrito
+			 LEFT JOIN productos p ON p.id = ci.id_producto
+			 LEFT JOIN servicios s ON s.id = ci.id_servicio
+			 LEFT JOIN negocios n ON n.id = COALESCE(p.id_negocio, s.id_negocio)
+			 WHERE c.id_usuario = $1
+			   AND n.id_usuario = $1
+			 LIMIT 1`,
+			[idUsuario]
+		);
+
+		if (result.rows.length > 0) {
+			const error = new Error("Tu carrito contiene una publicacion de tu propio negocio");
+			error.statusCode = 403;
+			throw error;
+		}
+	}
+
+	async function validarStockProductosCheckout(client, idUsuario) {
+		const result = await client.query(
+			`SELECT
+			   ci.id AS id_item,
+			   ci.cantidad,
+			   p.id AS id_producto,
+			   p.nombre,
+			   p.stock_total,
+			   p.esta_activo,
+			   COALESCE(l.stock_lotes, 0)::int AS stock_lotes
+			 FROM carrito_items ci
+			 INNER JOIN carrito c ON c.id = ci.id_carrito
+			 INNER JOIN productos p ON p.id = ci.id_producto
+			 LEFT JOIN LATERAL (
+			   SELECT COALESCE(SUM(li.stock_disponible), 0)::int AS stock_lotes
+			   FROM lotes_inventario li
+			   WHERE li.id_producto = p.id
+			     AND li.stock_disponible > 0
+			     AND (li.fecha_caducidad IS NULL OR li.fecha_caducidad >= CURRENT_DATE)
+			 ) l ON TRUE
+			 WHERE c.id_usuario = $1
+			   AND ci.id_producto IS NOT NULL
+			 ORDER BY ci.id ASC`,
+			[idUsuario]
+		);
+
+		for (const item of result.rows) {
+			if (item.esta_activo !== true) {
+				const error = new Error(`El producto ${item.nombre || item.id_producto} ya no esta disponible`);
+				error.statusCode = 409;
+				throw error;
+			}
+
+			const stockDisponible = obtenerStockOperable(item);
+			if (Number(item.cantidad || 0) > stockDisponible) {
+				const error = new Error(`Stock insuficiente para ${item.nombre || "producto"}; disponible: ${stockDisponible}`);
+				error.statusCode = 409;
+				throw error;
+			}
+		}
 	}
 
 	async function calcularResumenCheckout(client, idUsuario, codigoCuponRaw = null) {
@@ -519,14 +654,13 @@ function createCompradorCarritoRouter({ pool }) {
 			const idCarrito = await obtenerOCrearCarrito(client, idUsuario);
 
 			if (tieneProducto) {
-				const producto = await client.query(
-					"SELECT id, stock_total FROM productos WHERE id = $1 AND esta_activo = TRUE LIMIT 1",
-					[idProducto]
-				);
-				if (producto.rows.length === 0) {
+				await validarNoCompraPropia(client, idUsuario, { idProducto });
+				const producto = await obtenerStockProducto(client, idProducto);
+				if (!producto || producto.esta_activo !== true) {
 					await client.query("ROLLBACK");
 					return res.status(404).json({ mensaje: "Producto no encontrado o inactivo" });
 				}
+				const stockDisponible = obtenerStockOperable(producto);
 
 				const existente = await client.query(
 					`SELECT id, cantidad
@@ -538,7 +672,7 @@ function createCompradorCarritoRouter({ pool }) {
 
 				if (existente.rows.length > 0) {
 					const nuevaCantidad = Number(existente.rows[0].cantidad) + cantidadNum;
-					if (nuevaCantidad > Number(producto.rows[0].stock_total || 0)) {
+					if (nuevaCantidad > stockDisponible) {
 						await client.query("ROLLBACK");
 						return res.status(400).json({ mensaje: "Stock insuficiente para la cantidad solicitada" });
 					}
@@ -548,7 +682,7 @@ function createCompradorCarritoRouter({ pool }) {
 						[cantidadNum, existente.rows[0].id]
 					);
 				} else {
-					if (cantidadNum > Number(producto.rows[0].stock_total || 0)) {
+					if (cantidadNum > stockDisponible) {
 						await client.query("ROLLBACK");
 						return res.status(400).json({ mensaje: "Stock insuficiente para la cantidad solicitada" });
 					}
@@ -569,6 +703,7 @@ function createCompradorCarritoRouter({ pool }) {
 					return res.status(400).json({ mensaje: "Los servicios agendados solo pueden agregarse con cantidad 1" });
 				}
 
+				await validarNoCompraPropia(client, idUsuario, { idServicio });
 				const servicio = await client.query(
 					"SELECT id FROM servicios WHERE id = $1 AND esta_activo = TRUE LIMIT 1",
 					[idServicio]
@@ -626,6 +761,9 @@ function createCompradorCarritoRouter({ pool }) {
 			return res.status(201).json({ mensaje: "Item agregado al carrito", carrito });
 		} catch (error) {
 			await client.query("ROLLBACK");
+			if (error.statusCode && Number(error.statusCode) !== 500) {
+				return res.status(Number(error.statusCode)).json({ mensaje: error.message });
+			}
 			console.error(error);
 			return res.status(500).json({ mensaje: "Error al agregar item al carrito" });
 		} finally {
@@ -673,17 +811,14 @@ function createCompradorCarritoRouter({ pool }) {
 			}
 
 			if (item.rows[0].id_producto !== null) {
-				const producto = await client.query(
-					"SELECT stock_total, esta_activo FROM productos WHERE id = $1 LIMIT 1",
-					[item.rows[0].id_producto]
-				);
+				const producto = await obtenerStockProducto(client, item.rows[0].id_producto);
 
-				if (producto.rows.length === 0 || producto.rows[0].esta_activo !== true) {
+				if (!producto || producto.esta_activo !== true) {
 					await client.query("ROLLBACK");
 					return res.status(404).json({ mensaje: "Producto no encontrado o inactivo" });
 				}
 
-				if (cantidadNum > Number(producto.rows[0].stock_total || 0)) {
+				if (cantidadNum > obtenerStockOperable(producto)) {
 					await client.query("ROLLBACK");
 					return res.status(400).json({ mensaje: "Stock insuficiente para la cantidad solicitada" });
 				}
@@ -857,6 +992,8 @@ function createCompradorCarritoRouter({ pool }) {
 
 			await obtenerOCrearCarrito(client, idUsuario);
 			const resumenCheckout = await calcularResumenCheckout(client, idUsuario, codigoCupon);
+			await validarStockProductosCheckout(client, idUsuario);
+			await validarCarritoSinComprasPropias(client, idUsuario);
 
 			const direccionSnapshot = await obtenerDireccionCheckout(client, idUsuario, idDireccion);
 			const metodoPagoSnapshot = await obtenerMetodoPagoCheckout(client, idUsuario, idMetodoPago);
@@ -932,6 +1069,37 @@ function createCompradorCarritoRouter({ pool }) {
 			);
 
 			await client.query("COMMIT");
+
+			// ── Notificaciones in-app (fire-and-forget, no bloquean la respuesta) ──
+			const totalFormateado = `$${Number(pedidoResult.rows[0]?.total || resumenCheckout.total).toFixed(2)}`;
+			crearNotificacion(pool, {
+				id_usuario: idUsuario,
+				tipo: "pedido_confirmado",
+				titulo: "Pedido confirmado",
+				mensaje: `Tu pedido por ${totalFormateado} fue confirmado exitosamente.`,
+				datos_extra: { pedido_id: idPedido, url: `/mis-compras/${idPedido}` },
+			});
+
+			// Notificar a los vendedores afectados
+			pool.query(
+				`SELECT DISTINCT n.id_usuario
+				 FROM detalle_pedido dp
+				 LEFT JOIN productos p ON p.id = dp.id_producto
+				 LEFT JOIN servicios s ON s.id = dp.id_servicio
+				 LEFT JOIN negocios n ON n.id = COALESCE(p.id_negocio, s.id_negocio)
+				 WHERE dp.id_pedido = $1 AND n.id_usuario IS NOT NULL`,
+				[idPedido]
+			).then((vendedoresResult) => {
+				for (const row of vendedoresResult.rows) {
+					crearNotificacion(pool, {
+						id_usuario: row.id_usuario,
+						tipo: "nuevo_pedido",
+						titulo: "Nuevo pedido recibido",
+						mensaje: `Recibiste un nuevo pedido por ${totalFormateado}.`,
+						datos_extra: { pedido_id: idPedido, url: `/vendedor/pedidos` },
+					});
+				}
+			}).catch((err) => console.error("[notif] Error al notificar vendedores:", err.message));
 
 			if (pedidoResult.rows.length === 0) {
 				return res.status(201).json({

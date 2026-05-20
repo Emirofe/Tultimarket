@@ -316,6 +316,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       throw new Error("Selecciona un horario disponible para agendar este servicio");
     }
 
+    if (
+      currentUser?.role === "vendedor" &&
+      negocioId &&
+      (product.businessId === String(negocioId) || product.sellerId === String(negocioId))
+    ) {
+      throw new Error("No puedes comprar tus propios productos o servicios");
+    }
+
     if (!currentUser) {
       if (product.type === "servicio") {
         throw new Error("Inicia sesion para agendar servicios");
@@ -347,7 +355,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       console.error("Error al agregar al carrito:", error);
       throw error; // Propaga para que la página pueda mostrar el error
     }
-  }, [currentUser, reloadCart]);
+  }, [currentUser, negocioId, reloadCart]);
 
   const removeFromCart = useCallback(async (cartKey: string) => {
     const item = cart.find((i) => (i.cartKey ?? i.product.id) === cartKey || i.product.id === cartKey);

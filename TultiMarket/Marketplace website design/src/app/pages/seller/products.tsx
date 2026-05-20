@@ -15,6 +15,7 @@ import {
 import { useStore } from "../../context/store-context";
 import { toast } from "sonner";
 import { toImageUrl } from "../../api/mappers";
+import { CategoryPicker, type CategoryOption } from "../../components/category-picker";
 
 interface ProductFormData {
   name: string;
@@ -53,7 +54,7 @@ export function SellerProductsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [formData, setFormData] = useState<ProductFormData>({ name: "", description: "", price: "", stock: "", category: "", sku: "" });
   const [imageUrl, setImageUrl] = useState("");
-  const [dbCategories, setDbCategories] = useState<{ id: string; name: string; tipo?: string }[]>([]);
+  const [dbCategories, setDbCategories] = useState<CategoryOption[]>([]);
 
   // ─── Descuento Modal ───
   const [discountProduct, setDiscountProduct] = useState<SellerProduct | null>(null);
@@ -61,8 +62,8 @@ export function SellerProductsPage() {
   const [savingDiscount, setSavingDiscount] = useState(false);
 
   useEffect(() => {
-    getCategoriasApi()
-      .then((cats) => { setDbCategories(cats); if (cats.length > 0 && !formData.category) setFormData((p) => ({ ...p, category: cats[0].id })); })
+    getCategoriasApi("producto")
+      .then((cats) => setDbCategories(cats))
       .catch(() => setDbCategories([]));
   }, []);
 
@@ -84,6 +85,7 @@ export function SellerProductsPage() {
     const imagenesUrls = imageUrl.trim() ? [imageUrl.trim()] : [];
     const catId = Number(formData.category);
     const categoriasIds = !isNaN(catId) && catId > 0 ? [catId] : [];
+    if (categoriasIds.length === 0) { toast.error("Selecciona una categoria para el producto"); return; }
     try {
       if (editingId) {
         await updateProductoVendedorApi(editingId, { nombre: formData.name, descripcion: formData.description || undefined, precio: parseFloat(formData.price), sku: formData.sku.trim() || undefined, stock_total: formData.stock ? parseInt(formData.stock) : undefined, imagenes: imagenesUrls.length > 0 ? imagenesUrls : undefined });
@@ -99,8 +101,8 @@ export function SellerProductsPage() {
     } catch (error) { toast.error(error instanceof Error ? error.message : "Error al guardar producto"); }
   };
 
-  const handleEdit = (p: SellerProduct) => { setEditingId(p.id); setFormData({ name: p.nombre, description: p.descripcion ?? "", price: String(p.precio), stock: String(p.stock_total), category: p.id_categoria ? String(p.id_categoria) : (dbCategories[0]?.id || ""), sku: p.sku ?? "" }); setImageUrl(p.imagen_principal || ""); setShowForm(true); };
-  const closeForm = () => { setShowForm(false); setEditingId(null); setFormData({ name: "", description: "", price: "", stock: "", category: dbCategories[0]?.id || "", sku: "" }); setImageUrl(""); };
+  const handleEdit = (p: SellerProduct) => { setEditingId(p.id); setFormData({ name: p.nombre, description: p.descripcion ?? "", price: String(p.precio), stock: String(p.stock_total), category: p.id_categoria ? String(p.id_categoria) : "", sku: p.sku ?? "" }); setImageUrl(p.imagen_principal || ""); setShowForm(true); };
+  const closeForm = () => { setShowForm(false); setEditingId(null); setFormData({ name: "", description: "", price: "", stock: "", category: "", sku: "" }); setImageUrl(""); };
 
   const toggleActive = async (p: SellerProduct) => {
     if (!negocioId) return;
@@ -166,7 +168,7 @@ export function SellerProductsPage() {
     <div>
       <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
         <h1 style={{ fontSize: 24, fontWeight: 600 }}>Mis Productos</h1>
-        <button onClick={() => { setShowForm(true); setEditingId(null); setFormData({ name: "", description: "", price: "", stock: "", category: dbCategories[0]?.id || "", sku: "" }); setImageUrl(""); }} className="flex items-center gap-2 bg-primary text-white px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors" style={{ fontSize: 14 }}><Plus size={18} /> Nuevo Producto</button>
+        <button onClick={() => { setShowForm(true); setEditingId(null); setFormData({ name: "", description: "", price: "", stock: "", category: "", sku: "" }); setImageUrl(""); }} className="flex items-center gap-2 bg-primary text-white px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-colors" style={{ fontSize: 14 }}><Plus size={18} /> Nuevo Producto</button>
       </div>
 
       <div className="relative mb-6">
@@ -183,7 +185,7 @@ export function SellerProductsPage() {
             <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>SKU</label><input value={formData.sku} onChange={(e) => setFormData(p => ({...p, sku: e.target.value}))} placeholder="Ej: PROD-001" className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} /></div>
             <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>Precio (MXN)</label><input type="number" step="0.01" value={formData.price} onChange={(e) => setFormData(p => ({...p, price: e.target.value}))} className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} required /></div>
             <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>Stock</label><input type="number" value={formData.stock} onChange={(e) => setFormData(p => ({...p, stock: e.target.value}))} className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} required /></div>
-            <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>Categoría</label><select value={formData.category} onChange={(e) => setFormData(p => ({...p, category: e.target.value}))} className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }}>{dbCategories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}</select></div>
+            <CategoryPicker categories={dbCategories} value={formData.category} onChange={(category) => setFormData(p => ({...p, category}))} allowedType="producto" label="Categoria" required className="sm:col-span-2" />
             <div><label className="block mb-1 text-muted-foreground" style={{ fontSize: 13 }}>URL de Imagen (opcional)</label><input type="text" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://ejemplo.com/imagen.jpg o /images/products/foto.jpg" className="w-full px-4 py-3 rounded-lg border border-border bg-input-background" style={{ fontSize: 14 }} /></div>
             {imageUrl && (<div className="sm:col-span-2"><p className="text-muted-foreground mb-1" style={{ fontSize: 12 }}>Vista previa:</p><img src={toImageUrl(imageUrl)} alt="preview" className="h-24 rounded-lg object-cover border border-border" /></div>)}
             <div className="sm:col-span-2 flex gap-2">

@@ -1,4 +1,6 @@
 const express = require("express");
+const { intentarEnviarCorreos } = require("../Admin/mail");
+const { notificarMultiples } = require("../Usuario/notificaciones-helper");
 
 function createCompradorReportesRouter({ pool }) {
 	const router = express.Router();
@@ -64,6 +66,118 @@ function createCompradorReportesRouter({ pool }) {
 		);
 
 		return result.rows[0] || null;
+	}
+
+	function escapeHtml(valor) {
+		return String(valor ?? "")
+			.replace(/&/g, "&amp;")
+			.replace(/</g, "&lt;")
+			.replace(/>/g, "&gt;")
+			.replace(/"/g, "&quot;")
+			.replace(/'/g, "&#039;");
+	}
+
+	function construirTicketReporte(idReporte) {
+		return `RPT-${String(idReporte).padStart(6, "0")}`;
+	}
+
+	function obtenerCorreosModeracionEnv() {
+		return String(process.env.ADMIN_NOTIFICATION_EMAILS || process.env.ADMIN_EMAILS || "")
+			.split(/[;,]/)
+			.map((email) => email.trim())
+			.filter((email) => email.length > 0);
+	}
+
+	async function obtenerContextoReporte(idReporte) {
+		const result = await pool.query(
+			`SELECT
+				 r.id,
+				 r.id_usuario AS id_reportante,
+				 r.id_negocio,
+				 r.id_producto,
+				 r.id_servicio,
+				 r.motivo,
+				 r.descripcion,
+				 r.estado_reporte,
+				 r.fecha_creacion,
+				 ur.nombre AS reportante_nombre,
+				 ur.email AS reportante_email,
+				 n.nombre_comercial,
+				 uv.id AS id_usuario_reportado,
+				 uv.nombre AS usuario_reportado_nombre,
+				 uv.email AS usuario_reportado_email,
+				 p.nombre AS nombre_producto,
+				 s.nombre AS nombre_servicio
+			 FROM reportes r
+			 INNER JOIN usuarios ur ON ur.id = r.id_usuario
+			 INNER JOIN negocios n ON n.id = r.id_negocio
+			 INNER JOIN usuarios uv ON uv.id = n.id_usuario
+			 LEFT JOIN productos p ON p.id = r.id_producto
+			 LEFT JOIN servicios s ON s.id = r.id_servicio
+			 WHERE r.id = $1
+			 LIMIT 1`,
+			[idReporte]
+		);
+
+		return result.rows[0] || null;
+	}
+
+	async function obtenerCorreosModeracion() {
+		const correosEnv = obtenerCorreosModeracionEnv();
+
+		try {
+			const result = await pool.query(
+				`SELECT u.email
+				 FROM usuarios u
+				 INNER JOIN roles r ON r.id = u.id_rol
+				 WHERE u.activo = TRUE
+				   AND u.fecha_eliminacion IS NULL
+				   AND u.email IS NOT NULL
+				   AND TRIM(u.email) <> ''
+				   AND LOWER(r.nombre_rol) = 'admin'
+				 ORDER BY u.id ASC`
+			);
+
+			return [...new Set([...correosEnv, ...result.rows.map((row) => row.email)])];
+		} catch (error) {
+			console.error("No se pudieron obtener correos admin para notificar reporte:", error);
+			return correosEnv;
+		}
+	}
+
+	async function notificarModeracionReporteCreado(idReporte) {
+		const contexto = await obtenerContextoReporte(idReporte);
+		if (!contexto) {
+			return { total: 0, enviados: 0, fallidos: [], smtp_configurado: false };
+		}
+
+		const destinatarios = await obtenerCorreosModeracion();
+		const ticket = construirTicketReporte(contexto.id);
+		const tipoObjetivo = contexto.id_producto ? "Producto" : "Servicio";
+		const nombreObjetivo = contexto.nombre_producto || contexto.nombre_servicio || "Sin nombre";
+		const asunto = `[TultiMarket] Nuevo reporte ${ticket}`;
+		const texto =
+			`Se recibio un nuevo reporte.\n\n` +
+			`Ticket: ${ticket}\n` +
+			`Estado: ${contexto.estado_reporte}\n` +
+			`Reportante: ${contexto.reportante_nombre || "N/D"} (${contexto.reportante_email || "sin correo"})\n` +
+			`Reportado: ${contexto.usuario_reportado_nombre || "N/D"} (${contexto.usuario_reportado_email || "sin correo"})\n` +
+			`Negocio: ${contexto.nombre_comercial || "N/D"}\n` +
+			`${tipoObjetivo}: ${nombreObjetivo}\n` +
+			`Motivo: ${contexto.motivo}\n` +
+			`Descripcion: ${contexto.descripcion || "Sin descripcion"}\n`;
+		const html =
+			`<p>Se recibio un nuevo reporte.</p>` +
+			`<p><strong>Ticket:</strong> ${escapeHtml(ticket)}</p>` +
+			`<p><strong>Estado:</strong> ${escapeHtml(contexto.estado_reporte)}</p>` +
+			`<p><strong>Reportante:</strong> ${escapeHtml(contexto.reportante_nombre || "N/D")} (${escapeHtml(contexto.reportante_email || "sin correo")})</p>` +
+			`<p><strong>Reportado:</strong> ${escapeHtml(contexto.usuario_reportado_nombre || "N/D")} (${escapeHtml(contexto.usuario_reportado_email || "sin correo")})</p>` +
+			`<p><strong>Negocio:</strong> ${escapeHtml(contexto.nombre_comercial || "N/D")}</p>` +
+			`<p><strong>${escapeHtml(tipoObjetivo)}:</strong> ${escapeHtml(nombreObjetivo)}</p>` +
+			`<p><strong>Motivo:</strong> ${escapeHtml(contexto.motivo)}</p>` +
+			`<p><strong>Descripcion:</strong> ${escapeHtml(contexto.descripcion || "Sin descripcion")}</p>`;
+
+		return intentarEnviarCorreos({ to: destinatarios, subject: asunto, text: texto, html });
 	}
 
 	// Crea un reporte nuevo desde la vista del comprador.
@@ -142,10 +256,44 @@ function createCompradorReportesRouter({ pool }) {
 				]
 			);
 
+			let notificacionCorreo = { total: 0, enviados: 0, fallidos: [], smtp_configurado: false };
+			try {
+				notificacionCorreo = await notificarModeracionReporteCreado(inserted.rows[0].id);
+			} catch (mailError) {
+				console.error("No se pudo notificar a moderacion sobre el reporte:", mailError);
+				notificacionCorreo = {
+					total: 0,
+					enviados: 0,
+					fallidos: [{ email: null, error: String(mailError?.message || mailError) }],
+					smtp_configurado: false,
+				};
+			}
+
+			// ── Notificación in-app para admins (fire-and-forget) ──
+			const nombreObjetivo = tipoObjetivo === "producto"
+				? (await pool.query("SELECT nombre FROM productos WHERE id = $1", [productoId])).rows[0]?.nombre
+				: (await pool.query("SELECT nombre FROM servicios WHERE id = $1", [servicioId])).rows[0]?.nombre;
+			pool.query(
+				`SELECT u.id FROM usuarios u INNER JOIN roles r ON r.id = u.id_rol WHERE u.activo = TRUE AND u.fecha_eliminacion IS NULL AND LOWER(r.nombre_rol) = 'admin'`
+			).then((adminsResult) => {
+				const adminIds = adminsResult.rows.map((r) => r.id);
+				if (adminIds.length > 0) {
+					notificarMultiples(pool, adminIds, {
+						tipo: "nuevo_reporte",
+						titulo: " Nuevo reporte recibido",
+						mensaje: `Se reporto el ${tipoObjetivo} "${nombreObjetivo || "Sin nombre"}" por motivo: ${motivoFinal}.`,
+						datos_extra: { reporte_id: inserted.rows[0].id, tipo_objetivo: tipoObjetivo, url: "/admin/reportes" },
+					});
+				}
+			}).catch((err) => console.error("[notif] Error al notificar admins:", err.message));
+
 			return res.status(201).json({
 				mensaje: "Reporte creado",
+				ticket: construirTicketReporte(inserted.rows[0].id),
+				notificacion_correo: notificacionCorreo,
 				reporte: {
 					...inserted.rows[0],
+					ticket: construirTicketReporte(inserted.rows[0].id),
 					tipo_objetivo: tipoObjetivo,
 				},
 			});

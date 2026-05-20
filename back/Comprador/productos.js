@@ -1,4 +1,5 @@
 const express = require("express");
+const IA_BASE_URL = process.env.IA_BASE_URL || "http://127.0.0.1:8000";
 
 function createCompradorRouter({ pool }) {
   const router = express.Router();
@@ -265,7 +266,8 @@ function createCompradorRouter({ pool }) {
            END AS porcentaje_descuento,
            pi.url_imagen AS imagen_principal,
            COALESCE(n.nombre_comercial, '') AS empresa,
-           COUNT(DISTINCT r.id) AS numero_resenas
+           COUNT(DISTINCT r.id) AS numero_resenas,
+           p.id_negocio
          FROM productos p
          INNER JOIN producto_categoria pc ON pc.id_producto = p.id
          LEFT JOIN negocios n ON n.id = p.id_negocio
@@ -281,7 +283,7 @@ function createCompradorRouter({ pool }) {
          WHERE p.esta_activo = TRUE
            AND ${filtros.join(" AND ")}
          GROUP BY p.id, p.nombre, p.calificacion, p.precio, pi.url_imagen, n.nombre_comercial, p.fecha_registro,
-                  d.id, d.codigo_cupon, d.porcentaje_descuento, d.fecha_inicio, d.fecha_fin
+                  d.id, d.codigo_cupon, d.porcentaje_descuento, d.fecha_inicio, d.fecha_fin, p.id_negocio
          ORDER BY ${orderBy}`,
         valores
       );
@@ -396,7 +398,8 @@ function createCompradorRouter({ pool }) {
            COUNT(DISTINCT r.id) AS numero_resenas,
            COALESCE(agenda.horarios_disponibles, 0) AS horarios_disponibles,
            agenda.proximo_horario_inicio,
-           agenda.proximo_horario_fin
+           agenda.proximo_horario_fin,
+           s.id_negocio
          FROM servicios s
          INNER JOIN servicio_categoria sc ON sc.id_servicio = s.id
          INNER JOIN negocios n ON n.id = s.id_negocio
@@ -423,7 +426,7 @@ function createCompradorRouter({ pool }) {
            AND ${filtros.join(" AND ")}
          GROUP BY s.id, s.nombre, s.calificacion, s.precio_base, si.url_imagen, n.nombre_comercial, s.fecha_registro,
                   d.id, d.codigo_cupon, d.porcentaje_descuento, d.fecha_inicio, d.fecha_fin,
-                  agenda.horarios_disponibles, agenda.proximo_horario_inicio, agenda.proximo_horario_fin
+                  agenda.horarios_disponibles, agenda.proximo_horario_inicio, agenda.proximo_horario_fin, s.id_negocio
          ORDER BY ${orderBy}`,
         valores
       );
@@ -525,7 +528,8 @@ function createCompradorRouter({ pool }) {
            END AS porcentaje_descuento,
            pi.url_imagen AS imagen_principal,
            COALESCE(n.nombre_comercial, '') AS empresa,
-           COUNT(DISTINCT r.id) AS numero_resenas
+           COUNT(DISTINCT r.id) AS numero_resenas,
+           p.id_negocio
          FROM productos p
          LEFT JOIN negocios n ON n.id = p.id_negocio
          LEFT JOIN descuentos d ON d.id = p.id_descuento
@@ -539,7 +543,7 @@ function createCompradorRouter({ pool }) {
          LEFT JOIN resenas r ON r.id_producto = p.id
          WHERE ${filtros.join(" AND ")}
          GROUP BY p.id, p.nombre, p.calificacion, p.precio, pi.url_imagen, n.nombre_comercial, p.fecha_registro,
-                  d.id, d.codigo_cupon, d.porcentaje_descuento, d.fecha_inicio, d.fecha_fin
+                  d.id, d.codigo_cupon, d.porcentaje_descuento, d.fecha_inicio, d.fecha_fin, p.id_negocio
          ORDER BY ${orderBy}`,
         valores
       );
@@ -643,7 +647,8 @@ function createCompradorRouter({ pool }) {
            COUNT(DISTINCT r.id) AS numero_resenas,
            COALESCE(agenda.horarios_disponibles, 0) AS horarios_disponibles,
            agenda.proximo_horario_inicio,
-           agenda.proximo_horario_fin
+           agenda.proximo_horario_fin,
+           s.id_negocio
          FROM servicios s
          LEFT JOIN negocios n ON n.id = s.id_negocio
          LEFT JOIN descuentos d ON d.id = s.id_descuento
@@ -668,7 +673,7 @@ function createCompradorRouter({ pool }) {
          WHERE ${filtros.join(" AND ")}
          GROUP BY s.id, s.nombre, s.calificacion, s.precio_base, si.url_imagen, n.nombre_comercial, s.fecha_registro,
                   d.id, d.codigo_cupon, d.porcentaje_descuento, d.fecha_inicio, d.fecha_fin,
-                  agenda.horarios_disponibles, agenda.proximo_horario_inicio, agenda.proximo_horario_fin
+                  agenda.horarios_disponibles, agenda.proximo_horario_inicio, agenda.proximo_horario_fin, s.id_negocio
          ORDER BY ${orderBy}`,
         valores
       );
@@ -703,7 +708,8 @@ function createCompradorRouter({ pool }) {
            d.porcentaje_descuento,
            pi.url_imagen AS imagen_principal,
            COALESCE(n.nombre_comercial, '') AS empresa,
-           COUNT(DISTINCT r.id) AS numero_resenas
+           COUNT(DISTINCT r.id) AS numero_resenas,
+           p.id_negocio
          FROM productos p
          INNER JOIN descuentos d ON d.id = p.id_descuento
          LEFT JOIN negocios n ON n.id = p.id_negocio
@@ -718,7 +724,7 @@ function createCompradorRouter({ pool }) {
          WHERE p.esta_activo = TRUE
            AND d.codigo_cupon IS NULL
            AND CURRENT_TIMESTAMP BETWEEN d.fecha_inicio AND d.fecha_fin
-         GROUP BY p.id, p.nombre, p.calificacion, p.precio, d.porcentaje_descuento, pi.url_imagen, n.nombre_comercial, p.fecha_registro
+         GROUP BY p.id, p.nombre, p.calificacion, p.precio, d.porcentaje_descuento, pi.url_imagen, n.nombre_comercial, p.fecha_registro, p.id_negocio
          ORDER BY p.fecha_registro DESC, p.nombre ASC`
       );
 
@@ -734,6 +740,7 @@ function createCompradorRouter({ pool }) {
           imagen_principal: producto.imagen_principal,
           empresa: producto.empresa,
           numero_resenas: Number(producto.numero_resenas),
+          id_negocio: producto.id_negocio,
         })),
       });
     } catch (error) {
@@ -758,7 +765,8 @@ function createCompradorRouter({ pool }) {
            COUNT(DISTINCT r.id) AS numero_resenas,
            COALESCE(agenda.horarios_disponibles, 0) AS horarios_disponibles,
            agenda.proximo_horario_inicio,
-           agenda.proximo_horario_fin
+           agenda.proximo_horario_fin,
+           s.id_negocio
          FROM servicios s
          INNER JOIN descuentos d ON d.id = s.id_descuento
          LEFT JOIN negocios n ON n.id = s.id_negocio
@@ -784,7 +792,7 @@ function createCompradorRouter({ pool }) {
            AND d.codigo_cupon IS NULL
            AND CURRENT_TIMESTAMP BETWEEN d.fecha_inicio AND d.fecha_fin
          GROUP BY s.id, s.nombre, s.calificacion, s.precio_base, d.porcentaje_descuento, si.url_imagen, n.nombre_comercial, s.fecha_registro,
-                  agenda.horarios_disponibles, agenda.proximo_horario_inicio, agenda.proximo_horario_fin
+                  agenda.horarios_disponibles, agenda.proximo_horario_inicio, agenda.proximo_horario_fin, s.id_negocio
          ORDER BY s.fecha_registro DESC, s.nombre ASC`
       );
 
@@ -803,6 +811,7 @@ function createCompradorRouter({ pool }) {
           horarios_disponibles: Number(servicio.horarios_disponibles || 0),
           proximo_horario_inicio: servicio.proximo_horario_inicio,
           proximo_horario_fin: servicio.proximo_horario_fin,
+          id_negocio: servicio.id_negocio,
         })),
       });
     } catch (error) {
@@ -925,6 +934,7 @@ function createCompradorRouter({ pool }) {
            END AS porcentaje_descuento,
            p.sku,
            p.fecha_registro,
+           p.id_negocio,
            p.stock_total,
            img.url_imagen AS imagen_principal,
            COALESCE(
@@ -1013,6 +1023,7 @@ function createCompradorRouter({ pool }) {
           imagen_principal: producto.imagen_principal,
           galeria_imagenes: producto.galeria_imagenes,
           empresa: producto.empresa,
+          id_negocio: producto.id_negocio,
           stock_total: Number(producto.stock_total),
           numero_resenas: Number(producto.numero_resenas),
           categorias: producto.categorias,
@@ -1067,6 +1078,7 @@ function createCompradorRouter({ pool }) {
            END AS porcentaje_descuento,
            s.duracion_minutos,
            s.fecha_registro,
+           s.id_negocio,
            img.url_imagen AS imagen_principal,
            COALESCE(
              (
@@ -1177,6 +1189,7 @@ function createCompradorRouter({ pool }) {
           imagen_principal: servicio.imagen_principal,
           galeria_imagenes: servicio.galeria_imagenes,
           empresa: servicio.empresa,
+          id_negocio: servicio.id_negocio,
           numero_resenas: Number(servicio.numero_resenas),
           categorias: categoriasResult.rows.map((categoria) => categoria.nombre_categoria),
           agenda_disponible: agendaResult.rows.map((slot) => ({
@@ -1212,6 +1225,78 @@ function createCompradorRouter({ pool }) {
     } catch (error) {
       console.error(error);
       return res.status(500).json({ mensaje: "Error al obtener detalle del servicio" });
+    }
+  });
+
+  // Obtener recomendaciones
+  router.get("/comprador/home/recomendaciones/:idUsuario", async (req, res) => {
+    const idUsuario = Number(req.params.idUsuario);
+    const limite = req.query.limite ? Number(req.query.limite) : 5;
+
+    if (!Number.isInteger(idUsuario) || idUsuario <= 0) {
+      return res.status(400).json({ mensaje: "idUsuario invalido" });
+    }
+
+    try {
+      const iaBridgeUrl = `${IA_BASE_URL}/recomendaciones/home/${idUsuario}?limite=${limite}`;
+      
+      const response = await fetch(iaBridgeUrl);
+      
+      if (!response.ok) {
+        throw new Error(`El Bridge de IA respondio con estado: ${response.status}`);
+      }
+
+      const datosIA = await response.json();
+
+      return res.status(200).json(datosIA);
+
+    } catch (error) {
+      console.error("Error al conectar con el Bridge de IA:", error.message);
+      try {
+        console.warn("Fallback");
+        const fallbackResult = await pool.query(
+          `SELECT p.id, p.nombre, p.calificacion, p.precio, pi.url_imagen AS imagen_principal, p.stock_total
+           FROM productos p
+           LEFT JOIN producto_imagenes pi ON pi.id_producto = p.id AND pi.es_principal = TRUE
+           WHERE p.esta_activo = TRUE AND p.stock_total > 0
+           ORDER BY p.calificacion DESC NULLS LAST, p.fecha_registro DESC
+           LIMIT $1`, [limite]
+        );
+
+        return res.status(200).json({
+          usuario_id: idUsuario,
+          tipo_usuario: "fallback_traditional",
+          perfil: "[FALLBACK] Modulo de IA no disponible temporalmente",
+          carruseles: [
+            {
+              nombre: "Productos Destacados",
+              items: fallbackResult.rows.map(row => ({
+                item_id: `P-${row.id}`,
+                tipo: "producto",
+                nombre: row.nombre,
+                categoria_principal: "Destacado",
+                precio_unitario: Number(row.precio),
+                precio_final: Number(row.precio),
+                cantidad_sugerida: 1,
+                precio_total: Number(row.precio),
+                razon_cantidad: "Popular en la plataforma",
+                score_relevancia: 1.0,
+                etiqueta: "Destacado",
+                calificacion: row.calificacion !== null ? Number(row.calificacion) : 0,
+                descuento_porcentaje: null,
+                nombre_negocio: "Proveedor recomendado",
+                imagen_principal: row.imagen_principal,
+                stock: row.stock_total
+              }))
+            }
+          ],
+          total_items: fallbackResult.rows.length,
+          latencia_ms: 0.1
+        });
+      } catch (dbError) {
+        console.error("Error en fallback DB:", dbError.message);
+        return res.status(500).json({ mensaje: "Error al obtener recomendaciones" });
+      }
     }
   });
 

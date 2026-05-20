@@ -1,6 +1,13 @@
-import { useState } from "react";
-import { Plus, AlertCircle, Loader2, Tag, CheckCircle } from "lucide-react";
-import { createCategoriaVendedorApi } from "../../api/api-client";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, AlertCircle, Loader2, Tag, CheckCircle, Search } from "lucide-react";
+import { createCategoriaVendedorApi, getCategoriasApi } from "../../api/api-client";
+import {
+  CategoryPicker,
+  buildCategoryPath,
+  categorySupportsType,
+  getCategoryDepth,
+  type CategoryOption,
+} from "../../components/category-picker";
 
 export function SellerCategoriesPage() {
   const [showForm, setShowForm] = useState(false);
@@ -14,12 +21,49 @@ export function SellerCategoriesPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<{ [key: string]: string }>({});
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(true);
+  const [categorySearch, setCategorySearch] = useState("");
+
+  const loadCategories = async () => {
+    setLoadingCategories(true);
+    try {
+      setCategories(await getCategoriasApi());
+    } catch {
+      setCategories([]);
+    } finally {
+      setLoadingCategories(false);
+    }
+  };
+
+  useEffect(() => {
+    loadCategories();
+  }, []);
+
+  useEffect(() => {
+    if (!formData.id_padre) return;
+    const parent = categories.find((category) => category.id === formData.id_padre);
+    if (!categorySupportsType(parent, formData.tipo)) {
+      setFormData((current) => ({ ...current, id_padre: "" }));
+    }
+  }, [categories, formData.id_padre, formData.tipo]);
+
+  const filteredCategories = useMemo(() => {
+    const query = categorySearch.trim().toLowerCase();
+    if (!query) return [];
+    return categories
+      .filter((category) => {
+        const path = buildCategoryPath(category.id, categories).toLowerCase();
+        return path.includes(query) || String(category.tipo || "").toLowerCase().includes(query);
+      })
+      .slice(0, 40);
+  }, [categories, categorySearch]);
 
   const validateForm = () => {
     const errors: { [key: string]: string } = {};
 
     if (!formData.nombre_categoria.trim()) {
-      errors.nombre_categoria = "El nombre de la categoría es requerido";
+      errors.nombre_categoria = "El nombre de la categoria es requerido";
     } else if (formData.nombre_categoria.trim().length < 2) {
       errors.nombre_categoria = "El nombre debe tener al menos 2 caracteres";
     } else if (formData.nombre_categoria.trim().length > 100) {
@@ -27,7 +71,18 @@ export function SellerCategoriesPage() {
     }
 
     if (formData.descripcion && formData.descripcion.length > 500) {
-      errors.descripcion = "La descripción no puede exceder 500 caracteres";
+      errors.descripcion = "La descripcion no puede exceder 500 caracteres";
+    }
+
+    if (formData.id_padre) {
+      const parent = categories.find((category) => category.id === formData.id_padre);
+      if (!parent) {
+        errors.id_padre = "Selecciona una categoria padre valida";
+      } else if (!categorySupportsType(parent, formData.tipo)) {
+        errors.id_padre = "La categoria padre no aplica para este tipo";
+      } else if (getCategoryDepth(parent.id, categories) >= 3) {
+        errors.id_padre = "Esta categoria ya esta en el nivel 3. Elige un nivel 1 o 2.";
+      }
     }
 
     setValidationErrors(errors);
@@ -60,16 +115,33 @@ export function SellerCategoriesPage() {
         data.id_padre = Number(formData.id_padre);
       }
 
-      await createCategoriaVendedorApi(data);
+      const result = await createCategoriaVendedorApi(data);
+      const created = result.categoria;
 
-      setSuccess(`Categoría "${formData.nombre_categoria.trim()}" creada exitosamente`);
+      if (created?.id) {
+        const createdCategory: CategoryOption = {
+          id: String(created.id),
+          name: created.nombre_categoria,
+          tipo: created.tipo,
+          id_padre: created.id_padre != null ? String(created.id_padre) : null,
+        };
+        setCategories((current) =>
+          [...current.filter((category) => category.id !== createdCategory.id), createdCategory].sort((a, b) =>
+            a.name.localeCompare(b.name, "es", { sensitivity: "base" })
+          )
+        );
+      } else {
+        await loadCategories();
+      }
+
+      setSuccess(`Categoria "${formData.nombre_categoria.trim()}" creada exitosamente`);
       resetForm();
       setTimeout(() => setSuccess(null), 5000);
     } catch (err: any) {
       if (err.message?.includes("ya existe")) {
-        setValidationErrors({ nombre_categoria: "Ya existe una categoría con este nombre y tipo" });
+        setValidationErrors({ nombre_categoria: "Ya existe una categoria con este nombre y tipo" });
       } else {
-        setError(err.message || "Error al guardar la categoría");
+        setError(err.message || "Error al guardar la categoria");
       }
     } finally {
       setSaving(false);
@@ -84,7 +156,7 @@ export function SellerCategoriesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 600 }}>Crear Categorias</h1>
           <p className="text-muted-foreground" style={{ fontSize: 14 }}>
@@ -99,6 +171,68 @@ export function SellerCategoriesPage() {
           >
             <Plus size={16} /> Nueva Categoria
           </button>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-border p-5 space-y-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="flex items-center gap-2" style={{ fontSize: 18, fontWeight: 600 }}>
+              <Search size={18} /> Buscar categoria
+            </h2>
+            <p className="text-muted-foreground" style={{ fontSize: 13 }}>
+              Encuentra una categoria por nombre, tipo o ruta.
+            </p>
+          </div>
+          <span className="text-muted-foreground" style={{ fontSize: 12 }}>
+            {categories.length} categorias
+          </span>
+        </div>
+
+        <div className="relative">
+          <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Buscar categoria..."
+            value={categorySearch}
+            onChange={(event) => setCategorySearch(event.target.value)}
+            className="w-full pl-10 pr-4 py-3 rounded-lg border border-border bg-white focus:border-primary outline-none"
+            style={{ fontSize: 14 }}
+          />
+        </div>
+
+        {loadingCategories ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="animate-spin text-primary" size={28} />
+          </div>
+        ) : categorySearch.trim() ? (
+          <div className="border border-border rounded-xl overflow-hidden">
+            {filteredCategories.length === 0 ? (
+              <p className="text-center py-8 text-muted-foreground" style={{ fontSize: 14 }}>
+                No se encontraron categorias
+              </p>
+            ) : (
+              filteredCategories.map((category) => (
+                <div key={category.id} className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border last:border-0">
+                  <div className="min-w-0">
+                    <p className="truncate" style={{ fontSize: 14, fontWeight: 600 }}>
+                      {category.name}
+                    </p>
+                    <p className="text-muted-foreground truncate" style={{ fontSize: 12 }}>
+                      {buildCategoryPath(category.id, categories)}
+                    </p>
+                  </div>
+                  <span className="px-2 py-1 rounded bg-gray-100 text-muted-foreground capitalize shrink-0" style={{ fontSize: 12 }}>
+                    {category.tipo}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-border py-8 px-4 text-center text-muted-foreground" style={{ fontSize: 14 }}>
+            Escribe en el buscador para encontrar rapidamente una categoria.
+          </div>
         )}
       </div>
 
@@ -151,13 +285,13 @@ export function SellerCategoriesPage() {
 
           <div>
             <label className="block mb-1.5" style={{ fontSize: 14, fontWeight: 500 }}>
-              Descripción (opcional)
+              Descripcion (opcional)
             </label>
             <textarea
               value={formData.descripcion}
               onChange={(e) => setFormData({ ...formData, descripcion: e.target.value })}
               className="w-full px-4 py-3 rounded-lg border border-border bg-gray-50 outline-none focus:border-primary"
-              placeholder="Describe brevemente la categoría..."
+              placeholder="Describe brevemente la categoria..."
               rows={3}
               style={{ fontSize: 14 }}
             />
@@ -167,21 +301,21 @@ export function SellerCategoriesPage() {
           </div>
 
           <div>
-            <label className="block mb-1.5" style={{ fontSize: 14, fontWeight: 500 }}>
-              ID Categoría Padre (opcional)
-            </label>
-            <input
-              type="number"
+            <CategoryPicker
+              categories={categories}
               value={formData.id_padre}
-              onChange={(e) => setFormData({ ...formData, id_padre: e.target.value })}
-              className="w-full px-4 py-3 rounded-lg border border-border bg-gray-50 outline-none focus:border-primary"
-              placeholder="Deja vacio si es categoria raiz"
-              min={1}
-              style={{ fontSize: 14 }}
+              onChange={(id_padre) => setFormData({ ...formData, id_padre })}
+              allowedType={formData.tipo}
+              label="Categoria padre (opcional)"
+              allowClear
+              clearLabel="Crear como categoria raiz"
             />
+            {validationErrors.id_padre && (
+              <p className="text-red-500 mt-1" style={{ fontSize: 12 }}>{validationErrors.id_padre}</p>
+            )}
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex gap-3 flex-wrap">
             <button
               type="submit"
               disabled={saving}
