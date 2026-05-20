@@ -34,10 +34,21 @@ jobs:
 
       - name: Prepare deployment package
         run: |
-          npm install --omit=dev --prefix ./deploy serve
-          cp package.json ./deploy/package.json
-          cp -r dist ./deploy/dist
-          node -e "const fs=require('fs'); const p=require('./deploy/package.json'); p.scripts={start:'serve -s dist -l tcp://0.0.0.0:' + (process.env.PORT || 8080)}; p.dependencies={serve:p.dependencies?.serve || '^14.2.4'}; fs.writeFileSync('./deploy/package.json', JSON.stringify(p,null,2));"
+          mkdir -p deploy
+          cp -r dist deploy/dist
+          cat > deploy/package.json <<'EOF'
+          {
+            "name": "tultimarket-front",
+            "version": "1.0.0",
+            "type": "module",
+            "scripts": {
+              "start": "serve -s dist -l tcp://0.0.0.0:${PORT:-8080}"
+            },
+            "dependencies": {
+              "serve": "^14.2.4"
+            }
+          }
+          EOF
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
