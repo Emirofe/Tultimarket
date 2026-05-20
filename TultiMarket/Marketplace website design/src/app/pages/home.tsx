@@ -431,7 +431,7 @@ export function HomePage() {
       {!selectedLevel1 && !searchFilter && (!isLoggedIn || iaRecommendations.length === 0) && topRated.length > 0 && (
         <section className="max-w-7xl mx-auto px-4 pb-8 w-full">
           <h2 className="mb-6" style={{ fontSize: 22, fontWeight: 600 }}>
-            Mejor Calificados
+            Lo más solicitado
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {topRated.map((product) => (
