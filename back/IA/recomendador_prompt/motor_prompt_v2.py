@@ -213,9 +213,10 @@ class MotorPromptV2:
             limite             = 300,
         )
 
-        # Fallback: si las palabras clave filtraron todo
-        if not candidatos and palabras_busq:
-            candidatos = self.repo.buscar_items(
+        # Fallback inteligente: si las palabras clave arrojan muy pocos resultados (ej. < 15),
+        # rellenamos el catálogo con productos genéricos de fiesta para no dejar el paquete vacío.
+        if len(candidatos) < 15 and palabras_busq:
+            candidatos_extra = self.repo.buscar_items(
                 nombres_categorias = cats_objetivo,
                 palabras_clave     = [],
                 precio_max         = entidades.presupuesto_max,
@@ -223,6 +224,10 @@ class MotorPromptV2:
                 incluir_servicios  = entidades.incluir_servicios,
                 limite             = 300,
             )
+            ids_existentes = {c.item_id for c in candidatos}
+            for c in candidatos_extra:
+                if c.item_id not in ids_existentes:
+                    candidatos.append(c)
 
         # ── Etapa 4: Calcular score de relevancia ─────────────────────────
         personas = entidades.personas_efectivas

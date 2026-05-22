@@ -284,10 +284,7 @@ class ConexionBDIA(RepositorioBase):
 
         # ── Filtro de edad ────────────────────────────────────────────────
         if rango_edad == "ninos":
-            condiciones.append(
-                "(p.nombre ILIKE %s OR p.descripcion ILIKE %s)"
-            )
-            params.extend(["%infantil%", "%infantil%"])
+            pass
 
         # ── Filtro de categorías ──────────────────────────────────────────
         # Verifica en la tabla intermedia producto_categoria
