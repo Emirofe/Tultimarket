@@ -21,92 +21,212 @@ interface RecommendationResponse {
 }
 
 interface IAApiItem {
-  id?: string;
-  item_id?: string;
-  nombre: string;
+  id?: string | number;
+  item_id?: string | number;
+  nombre?: string;
+  name?: string;
   negocio?: string;
   nombre_negocio?: string;
-  tipo: "producto" | "servicio";
-  cantidad?: number;
-  cantidad_sugerida?: number;
+  sellerName?: string;
+  tipo?: "producto" | "servicio" | string;
+  cantidad?: number | string;
+  cantidad_sugerida?: number | string;
   razon?: string;
   razon_cantidad?: string;
   categoria_principal?: string;
   etiqueta?: string;
-  precio_unitario: number;
-  precio_final?: number;
-  precio_total: number;
-  calificacion: number;
-  descuento_porcentaje?: number | null;
-  imagen_principal: string | null;
-  stock?: number | null;
+  precio?: number | string;
+  price?: number | string;
+  precio_unitario?: number | string;
+  precio_final?: number | string;
+  precio_total?: number | string;
+  precio_original?: number | string;
+  calificacion?: number | string;
+  rating?: number | string;
+  descuento_porcentaje?: number | string | null;
+  imagen?: string | null;
+  imagen_principal?: string | null;
+  image?: string | null;
+  stock?: number | string | null;
+  duracion_minutos?: number | string | null;
 }
 
 interface IAApiSubcatalogo {
-  nombre: string;
-  presupuesto: number;
-  items: IAApiItem[];
+  nombre?: string;
+  title?: string;
+  categoria?: string;
+  presupuesto?: number | string;
+  presupuesto_seccion?: number | string;
+  items?: IAApiItem[];
+  productos?: IAApiItem[];
+  servicios?: IAApiItem[];
+  recommendations?: IAApiItem[];
 }
 
 interface IAApiResponse {
-  prompt_original: string;
-  evento: string;
-  personas: number;
-  presupuesto_total: number;
-  latencia_ms: number;
-  subcatalogos: IAApiSubcatalogo[];
+  prompt_original?: string;
+  evento?: string;
+  tipo_evento?: string;
+  personas?: number | string;
+  cantidad_personas?: number | string;
+  presupuesto_total?: number | string;
+  latencia_ms?: number | string;
+  subcatalogos?: IAApiSubcatalogo[];
+  carruseles?: IAApiSubcatalogo[];
+  items?: IAApiItem[];
+  productos?: IAApiItem[];
+  servicios?: IAApiItem[];
+  recomendaciones?: IAApiItem[];
+  recommendations?: IAApiItem[];
+  fallback?: boolean;
+  analysis?: Partial<ContextAnalysis>;
 }
 
 function mapIAResponseToRecommendations(data: IAApiResponse): RecommendationResponse {
-  const recommendations = data.subcatalogos.flatMap((subcatalogo) =>
-    subcatalogosItemsMap(subcatalogo, data.evento)
+  const subcatalogos = extractSubcatalogos(data);
+  const recommendations = subcatalogos.flatMap((subcatalogo, subcatalogoIndex) =>
+    subcatalogosItemsMap(subcatalogo, data.evento || data.tipo_evento || "", subcatalogoIndex)
   );
+  const relevantCategories = subcatalogos
+    .map((subcatalogo) => getSubcatalogoName(subcatalogo))
+    .filter(Boolean);
+  const budgetMax = toNumber(data.presupuesto_total, 0);
+  const people = toNumber(data.personas ?? data.cantidad_personas, 0);
 
   return {
     analysis: {
-      eventType: data.evento || "evento",
-      numberOfPeople: data.personas || null,
-      theme: "",
-      relevantCategories: data.subcatalogos.map((subcatalogo) => subcatalogo.nombre),
-      budget: data.presupuesto_total
-        ? { min: 0, max: Number(data.presupuesto_total) }
-        : null,
+      eventType: data.analysis?.eventType || data.evento || data.tipo_evento || "evento",
+      numberOfPeople: data.analysis?.numberOfPeople ?? (people > 0 ? people : null),
+      theme: data.analysis?.theme || "",
+      relevantCategories: data.analysis?.relevantCategories || relevantCategories,
+      budget: data.analysis?.budget || (budgetMax > 0 ? { min: 0, max: budgetMax } : null),
     },
     recommendations,
-    explanation: `La IA encontro ${recommendations.length} recomendaciones para tu evento.`,
-    latencyMs: data.latencia_ms,
+    explanation: data.fallback
+      ? `Mostrando ${recommendations.length} resultados relacionados mientras la IA no esta disponible.`
+      : `La IA encontro ${recommendations.length} recomendaciones para tu evento.`,
+    latencyMs: toNumber(data.latencia_ms, 0),
   };
 }
 
-function subcatalogosItemsMap(subcatalogo: IAApiSubcatalogo, evento: string): Product[] {
-  return subcatalogo.items.map((item): Product => {
-    const imageUrl = item.imagen_principal
-      ? (item.imagen_principal.startsWith("http") ? item.imagen_principal : toImageUrl(item.imagen_principal))
-      : toImageUrl(null);
-    
-    // ID limpio sin prefijo P- o S-
-    const cleanId = (item.id || item.item_id || "").replace(/^[PS]-/, "");
+function extractSubcatalogos(data: IAApiResponse): IAApiSubcatalogo[] {
+  const sectionSource = data.subcatalogos ?? data.carruseles;
+  if (Array.isArray(sectionSource)) return sectionSource;
 
-    // Si es servicio, el stock es 99 para que no se muestre. Si es producto, usa stock real.
-    const cleanStock = item.tipo === "servicio"
-      ? 99
-      : (item.stock !== undefined && item.stock !== null ? Number(item.stock) : Math.max(1, Number(item.cantidad || item.cantidad_sugerida) || 1));
+  const flatItems =
+    data.items ??
+    data.recomendaciones ??
+    data.recommendations ??
+    data.productos ??
+    data.servicios;
+
+  return Array.isArray(flatItems)
+    ? [{ nombre: "Recomendaciones", items: flatItems }]
+    : [];
+}
+
+function getSubcatalogoName(subcatalogo: IAApiSubcatalogo): string {
+  return subcatalogo.nombre || subcatalogo.title || subcatalogo.categoria || "Recomendaciones";
+}
+
+function getSubcatalogoItems(subcatalogo: IAApiSubcatalogo): IAApiItem[] {
+  return (
+    subcatalogo.items ??
+    subcatalogo.productos ??
+    subcatalogo.servicios ??
+    subcatalogo.recommendations ??
+    []
+  );
+}
+
+function toNumber(value: unknown, fallback = 0): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function toOptionalNumber(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : undefined;
+}
+
+function normalizeItemType(value: unknown): "producto" | "servicio" {
+  return String(value || "").toLowerCase() === "servicio" ? "servicio" : "producto";
+}
+
+function getImageUrl(item: IAApiItem): string {
+  const image = item.imagen_principal ?? item.imagen ?? item.image;
+  return image
+    ? (String(image).startsWith("http") ? String(image) : toImageUrl(String(image)))
+    : toImageUrl(null);
+}
+
+function getCleanItemId(item: IAApiItem, fallbackKey: string): string {
+  const rawId = item.item_id ?? item.id ?? "";
+  const cleanId = String(rawId).replace(/^[PS]-/i, "").trim();
+  return cleanId || `ia-${fallbackKey}`;
+}
+
+function normalizeIAResponse(payload: unknown): IAApiResponse {
+  const data = payload as { data?: unknown; resultado?: unknown; result?: unknown };
+  const nested = data?.data ?? data?.resultado ?? data?.result;
+
+  if (nested && typeof nested === "object") {
+    return nested as IAApiResponse;
+  }
+
+  return (payload || {}) as IAApiResponse;
+}
+
+function subcatalogosItemsMap(
+  subcatalogo: IAApiSubcatalogo,
+  evento: string,
+  subcatalogoIndex: number
+): Product[] {
+  return getSubcatalogoItems(subcatalogo).map((item, itemIndex): Product => {
+    const imageUrl = getImageUrl(item);
+    const itemType = normalizeItemType(item.tipo);
+    const quantity = toNumber(item.cantidad ?? item.cantidad_sugerida, 1);
+    const price = toNumber(
+      item.precio_final ??
+        item.precio_unitario ??
+        item.precio ??
+        item.price ??
+        item.precio_total,
+      0
+    );
+    const originalPrice = toNumber(item.precio_original ?? item.precio_unitario, 0);
+    const discountPercent = toNumber(item.descuento_porcentaje, 0);
+    const reason =
+      item.razon ||
+      item.razon_cantidad ||
+      `Recomendado para ${evento || "tu evento"}.`;
+    const description = quantity > 1
+      ? `${reason} Cantidad sugerida: ${quantity}.`
+      : reason;
+    const sellerName = String(
+      item.nombre_negocio || item.negocio || item.sellerName || "Proveedor recomendado"
+    );
 
     return {
-      id: cleanId,
-      name: item.nombre,
-      description: item.razon || item.razon_cantidad || `Recomendado para ${evento || "tu evento"}.`,
-      price: Number(item.precio_unitario) || 0,
+      id: getCleanItemId(item, `${subcatalogoIndex}-${itemIndex}`),
+      name: item.nombre || item.name || "Producto recomendado",
+      description,
+      price,
+      originalPrice: originalPrice > price ? originalPrice : undefined,
+      discountPercent: discountPercent > 0 ? discountPercent : undefined,
       image: imageUrl,
       images: [imageUrl],
-      category: subcatalogo.nombre || evento || "evento",
-      rating: Number(item.calificacion) || 0,
+      category: item.categoria_principal || getSubcatalogoName(subcatalogo) || evento || "evento",
+      rating: toNumber(item.calificacion ?? item.rating, 0),
       reviewCount: 0,
-      stock: cleanStock,
-      sellerId: item.negocio || item.nombre_negocio || "ia",
-      sellerName: item.nombre_negocio || item.negocio || "Proveedor recomendado",
+      stock: itemType === "servicio"
+        ? 99
+        : (item.stock !== undefined && item.stock !== null ? toNumber(item.stock, 1) : Math.max(1, quantity)),
+      sellerId: sellerName,
+      sellerName,
       reviews: [],
-      type: item.tipo,
+      type: itemType,
+      durationMin: itemType === "servicio" ? toOptionalNumber(item.duracion_minutos) : undefined,
       status: "Aprobado",
     };
   });
@@ -137,10 +257,15 @@ class IAService {
       });
 
       if (!response.ok) {
-        throw new Error(`Backend error: ${response.statusText}`);
+        const errorPayload = await response.json().catch(() => null);
+        const message =
+          (errorPayload as { error?: string; mensaje?: string } | null)?.error ||
+          (errorPayload as { error?: string; mensaje?: string } | null)?.mensaje ||
+          `Backend error: ${response.statusText}`;
+        throw new Error(message);
       }
 
-      const data = (await response.json()) as IAApiResponse;
+      const data = normalizeIAResponse(await response.json());
       return mapIAResponseToRecommendations(data);
     } catch (error) {
       console.error("Error calling IA backend:", error);
@@ -159,44 +284,11 @@ class IAService {
         throw new Error(`Backend error: ${response.statusText}`);
       }
 
-      const data = await response.json();
-      const carruseles: IAHomeCarousel[] = (data.carruseles || []).map(
-        (c: { nombre: string; items: IAApiItem[]; presupuesto_seccion: number }) => ({
-          title: c.nombre,
-          products: c.items.map((item: IAApiItem): Product => {
-            const imageUrl = item.imagen_principal
-              ? (item.imagen_principal.startsWith("http") ? item.imagen_principal : toImageUrl(item.imagen_principal))
-              : toImageUrl(null);
-
-            const cleanId = (item.item_id || item.id || "").replace(/^[PS]-/, "");
-            const cleanStock = item.tipo === "servicio"
-              ? 99
-              : (item.stock !== undefined && item.stock !== null ? Number(item.stock) : 99);
-
-            return {
-              id: cleanId,
-              name: item.nombre,
-              description: item.razon_cantidad || item.razon || "",
-              price: Number(item.precio_final ?? item.precio_unitario) || 0,
-              originalPrice: Number(item.precio_unitario) || undefined,
-              discountPercent: item.descuento_porcentaje !== undefined && item.descuento_porcentaje !== null ? Number(item.descuento_porcentaje) : undefined,
-              image: imageUrl,
-              images: [imageUrl],
-              category: item.categoria_principal || "general",
-              rating: Number(item.calificacion) || 0,
-              reviewCount: 0,
-              stock: cleanStock,
-              sellerId: item.nombre_negocio || item.negocio || "ia",
-              sellerName: item.nombre_negocio || item.negocio || "Proveedor",
-              reviews: [],
-              type: item.tipo,
-              status: "Aprobado",
-            };
-          }),
-        })
-      );
-
-      return carruseles;
+      const data = normalizeIAResponse(await response.json());
+      return extractSubcatalogos(data).map((subcatalogo, index) => ({
+        title: getSubcatalogoName(subcatalogo),
+        products: subcatalogosItemsMap(subcatalogo, data.evento || data.tipo_evento || "", index),
+      }));
     } catch (error) {
       console.error("Error fetching IA home recommendations:", error);
       return [];

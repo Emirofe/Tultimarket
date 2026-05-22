@@ -198,7 +198,9 @@ app.use(
 );
 
 app.use(
-  createIARouter()
+  createIARouter({
+    pool,
+  })
 );
 
 app.use(

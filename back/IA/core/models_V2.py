@@ -109,8 +109,6 @@ class ItemCatalogo:
 
     @property
     def precio_final(self) -> float:
-        if self.descuento_porcentaje:
-            return round(self.precio * (1 - self.descuento_porcentaje / 100), 2)
         return self.precio
 
     @property

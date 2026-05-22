@@ -1,0 +1,155 @@
+=============================================================================
+GUÍA DEFINITIVA: CÓMO SUBIR TULTIMARKET A UNA MÁQUINA VIRTUAL EN AZURE
+=============================================================================
+Esta guía está diseñada paso a paso, asumiendo que acabas de crear tu 
+cuenta de Azure y estás en la página principal (Inicio).
+
+Vamos a crear una máquina con Ubuntu (Linux) porque es el estándar de la 
+industria, es gratis en su capa básica y consume muy pocos recursos.
+
+-----------------------------------------------------------------------------
+PASO 1: CREAR LA MÁQUINA VIRTUAL (VM)
+-----------------------------------------------------------------------------
+1. En la página de inicio de Azure, haz clic en el ícono que dice "Máquinas virtuales" (Virtual machines).
+2. Haz clic en el botón azul "+ Crear" (+ Create) y selecciona "Máquina virtual de Azure".
+3. Se abrirá un formulario. Llena los datos así:
+   - Grupo de recursos (Resource group): Haz clic en "Crear nuevo" y ponle "Tultimarket-RG".
+   - Nombre de la máquina virtual: "Tultimarket-VM".
+   - Región: Elige la que esté más cerca de ti (ej. "South Central US" o "East US").
+   - Opciones de disponibilidad: No se requiere redundancia de la infraestructura.
+   - Imagen (Image): Selecciona "Ubuntu Server 22.04 LTS" o "24.04 LTS".
+   - Tamaño (Size): Si tienes créditos gratis, elige una pequeña como "Standard_B1s" (1 CPU, 1GB RAM) o "Standard_B2s" (2 CPU, 4GB RAM - recomendada si es posible).
+4. Cuenta de administrador:
+   - Tipo de autenticación: Elige "Contraseña" (Password) para que sea más fácil.
+   - Nombre de usuario: inventa uno (ej. "tultiadmin").
+   - Contraseña: Crea una contraseña segura y anótala muy bien.
+5. Reglas de puerto de entrada:
+   - Puertos de entrada públicos: Permitir los puertos seleccionados.
+   - Selecciona los puertos: SSH (22), HTTP (80) y HTTPS (443).
+6. Haz clic en el botón azul de hasta abajo "Revisar y crear" (Review + create).
+7. Espera a que valide y haz clic en "Crear". Espera unos minutos a que termine.
+8. Cuando diga "Se completó la implementación", haz clic en el botón "Ir al recurso" (Go to resource).
+
+-----------------------------------------------------------------------------
+PASO 2: ABRIR LOS PUERTOS PARA NUESTRA APP
+-----------------------------------------------------------------------------
+1. Ya estando en el panel de tu nueva máquina virtual, busca en el menú izquierdo la opción "Redes" (Networking).
+2. Verás una lista de reglas. Haz clic en "Agregar regla de puerto de entrada" (Add inbound port rule).
+3. En la ventana que se abre a la derecha, busca donde dice "Intervalos de puertos de destino" (Destination port ranges) y escribe: 3000, 5173, 8000
+   (Esto abrirá los puertos del Backend, Frontend e IA para que el mundo los vea).
+4. Donde dice "Nombre" (Name), ponle "Puertos-Tultimarket" y haz clic en "Agregar".
+5. ¡Importante! En la página principal de tu VM (Información general / Overview), anota tu "Dirección IP pública". La usaremos en adelante.
+
+-----------------------------------------------------------------------------
+PASO 3: CONECTARSE A LA MÁQUINA VIRTUAL
+-----------------------------------------------------------------------------
+1. Abre una terminal (PowerShell o CMD) en tu computadora local.
+2. Escribe el siguiente comando reemplazando con tu usuario y tu IP pública de Azure:
+   ssh tultiadmin@LA_IP_PUBLICA_DE_AZURE
+3. La primera vez te preguntará si confías en el servidor, escribe "yes" y da Enter.
+4. Te pedirá tu contraseña. Escríbela (no se verán asteriscos, es normal) y da Enter.
+¡Felicidades! Ya estás controlando la computadora de Azure desde tu terminal.
+
+-----------------------------------------------------------------------------
+PASO 4: INSTALAR LO NECESARIO EN LA MÁQUINA (NODE, PYTHON, GIT)
+-----------------------------------------------------------------------------
+Ejecuta estos comandos uno por uno en la terminal de Azure (copia y pega):
+
+# Actualizar el sistema
+sudo apt update && sudo apt upgrade -y
+
+# Instalar Python y herramientas necesarias
+sudo apt install python3 python3-pip python3-venv git -y
+
+# Instalar Node.js y npm (usando Node versión 20)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Instalar PM2 (La herramienta mágica que mantendrá todo encendido aunque cierres la terminal)
+sudo npm install pm2 -g
+
+-----------------------------------------------------------------------------
+PASO 5: DESCARGAR EL CÓDIGO (GITHUB)
+-----------------------------------------------------------------------------
+1. En la terminal de Azure escribe:
+   git clone https://github.com/Emirofe/Tultimarket.git
+2. Entra a la carpeta del proyecto:
+   cd Tultimarket
+
+-----------------------------------------------------------------------------
+PASO 6: CONFIGURAR Y PRENDER EL BACKEND (NODE.JS)
+-----------------------------------------------------------------------------
+1. Entra a la carpeta del back:
+   cd back
+2. Instala las dependencias:
+   npm install
+3. Crea el archivo de variables de entorno (el que conectará con la BD de tus compañeros):
+   nano .env
+4. Se abrirá un editor de texto feo. Pega esto adentro:
+   PGHOST=IP_DE_LA_BD_DE_TUS_COMPANEROS
+   PGDATABASE=NOMBRE_DE_LA_BD
+   PGUSER=USUARIO_DE_LA_BD
+   PGPASSWORD=CONTRASEÑA_DE_LA_BD
+   PORT=3000
+   IA_BASE_URL=http://127.0.0.1:8000
+5. Guarda el archivo presionando: Ctrl + O, luego Enter, y sal con Ctrl + X.
+6. Enciende el backend usando PM2 (para que se quede prendido para siempre):
+   pm2 start app.js --name "tultimarket-back"
+7. Regresa a la carpeta principal:
+   cd ..
+
+-----------------------------------------------------------------------------
+PASO 7: CONFIGURAR Y PRENDER LA IA (PYTHON)
+-----------------------------------------------------------------------------
+1. Entra a la carpeta de la IA:
+   cd back/IA
+2. Crea un entorno virtual e instálalo:
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+3. Enciende la IA usando PM2 (usamos el python del entorno virtual):
+   pm2 start "venv/bin/python -m uvicorn ai_bridge:app --host 127.0.0.1 --port 8000" --name "tultimarket-ia"
+4. Regresa a la carpeta principal:
+   cd ../..
+
+-----------------------------------------------------------------------------
+PASO 8: COMPILAR Y PRENDER EL FRONTEND (REACT/VITE)
+-----------------------------------------------------------------------------
+1. Entra a la carpeta del frontend:
+   cd "TultiMarket/Marketplace website design"
+2. Instala las dependencias:
+   npm install
+3. Crea un archivo .env.production para decirle al front dónde está el back en internet:
+   nano .env.production
+4. Pega esto adentro (reemplaza con tu IP de Azure real):
+   VITE_API_URL=http://TU_IP_PUBLICA_DE_AZURE:3000
+5. Guarda con Ctrl + O, Enter, y Ctrl + X.
+6. Construye (compila) la versión de producción súper rápida:
+   npm run build
+7. Enciende el frontend para siempre con PM2 usando "serve":
+   sudo npm install -g serve
+   pm2 start "serve -s dist -l 5173" --name "tultimarket-front"
+
+-----------------------------------------------------------------------------
+PASO 9: GUARDAR LA CONFIGURACIÓN DE PM2
+-----------------------------------------------------------------------------
+Para asegurarnos de que si la máquina virtual de Azure se reinicia, todos los 
+programas vuelvan a encenderse solos:
+1. Escribe en la terminal:
+   pm2 save
+2. Luego escribe:
+   pm2 startup
+3. Ese último comando te escupirá un texto largo que empieza con "sudo env PATH...". Copia ese texto tal cual te lo dió, pégalo en la terminal y dale Enter.
+
+-----------------------------------------------------------------------------
+¡LISTO!
+-----------------------------------------------------------------------------
+Tu plataforma ya está 100% en vivo en internet.
+Para ver la página web entra desde el navegador de tu computadora a:
+http://TU_IP_PUBLICA_DE_AZURE:5173
+
+Para checar que tu backend jala:
+http://TU_IP_PUBLICA_DE_AZURE:3000/health
+
+¡Mucha suerte con el despliegue!
+=============================================================================

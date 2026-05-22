@@ -35,8 +35,8 @@ class EntidadesPrompt:
         return " | ".join(partes) if partes else "sin entidades detectadas"
 
 EVENTOS = {
-    "fiesta":       ["fiesta", "festejo", "celebracion", "celebración", "party"],
-    "cumpleanos":   ["cumpleaños", "cumpleanos", "cumple", "años", "birthday"],
+    "fiesta":       ["fiesta", "festejo", "celebracion", "celebración", "party", "fista"],
+    "cumpleanos":   ["cumpleaños", "cumpleanos", "cumple", "años", "birthday", "cumpleano", "cumpleaño"],
     "boda":         ["boda", "matrimonio", "casamiento", "nupcial", "novios", "novia"],
     "graduacion":   ["graduación", "graduacion", "egreso", "titulacion", "grado"],
     "baby_shower":  ["baby shower", "babyshower", "bienvenida al bebe", "genero"],
@@ -104,7 +104,7 @@ TEMATICAS = [
     "vaquero", "cowboy", "espacio", "galaxia",
     "ciencia", "arte",
     "pirata", "piratas",
-    "princesa",
+    "princesa", "paw patrol", "patrulla canina", "peppa pig", "mario",
 ]
 
 PALABRAS_SERVICIO = [
@@ -342,13 +342,20 @@ class ExtractorEntidades:
         for t in e.tematica:
             ya_cap.add(t.lower())
 
-        palabras = re.findall(r'\b[a-záéíóúüñ]{5,}\b', texto)
+        palabras = re.findall(r'\b[a-záéíóúüñ]{4,}\b', texto)
         clave, vistas = [], set()
         for p in palabras:
             if p in stopwords or p in ya_cap or p in vistas:
                 continue
             clave.append(p)
             vistas.add(p)
+
+        if not clave and e.tipo_evento:
+            for sinonimo in EVENTOS.get(e.tipo_evento, []):
+                if len(sinonimo) >= 4 and sinonimo not in vistas:
+                    clave.append(sinonimo)
+                    vistas.add(sinonimo)
+
         return clave[:8]
 
     def _calcular_confianza(self, e: EntidadesPrompt) -> float:

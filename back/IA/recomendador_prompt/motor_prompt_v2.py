@@ -213,6 +213,17 @@ class MotorPromptV2:
             limite             = 300,
         )
 
+        # Fallback: si las palabras clave filtraron todo
+        if not candidatos and palabras_busq:
+            candidatos = self.repo.buscar_items(
+                nombres_categorias = cats_objetivo,
+                palabras_clave     = [],
+                precio_max         = entidades.presupuesto_max,
+                rango_edad         = entidades.rango_edad,
+                incluir_servicios  = entidades.incluir_servicios,
+                limite             = 300,
+            )
+
         # ── Etapa 4: Calcular score de relevancia ─────────────────────────
         personas = entidades.personas_efectivas
         candidatos_scored = [

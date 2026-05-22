@@ -252,7 +252,28 @@ class ConexionBDIA(RepositorioBase):
         # ── Filtro de palabras clave ──────────────────────────────────────
         # Busca en nombre y descripción del producto
         # ILIKE = LIKE sin distinguir mayúsculas/minúsculas (propio de PostgreSQL)
-        if palabras_clave:
+        if palabras_clave and nombres_categorias:
+            partes = []
+            for kw in palabras_clave:
+                partes.append(
+                    "(p.nombre ILIKE %s OR p.descripcion ILIKE %s)"
+                )
+                params.extend([f"%{kw}%", f"%{kw}%"])
+            condiciones.append(f"""
+                (
+                    ({' OR '.join(partes)})
+                    OR EXISTS (
+                        SELECT 1
+                        FROM   producto_categoria  pc2
+                        JOIN   categorias          c2
+                               ON c2.id = pc2.id_categoria
+                        WHERE  pc2.id_producto      = p.id
+                          AND  c2.nombre_categoria  = ANY(%s)
+                    )
+                )
+            """)
+            params.append(nombres_categorias)
+        elif palabras_clave:
             partes = []
             for kw in palabras_clave:
                 partes.append(
@@ -271,7 +292,7 @@ class ConexionBDIA(RepositorioBase):
         # ── Filtro de categorías ──────────────────────────────────────────
         # Verifica en la tabla intermedia producto_categoria
         # si el producto pertenece a alguna de las categorías detectadas
-        if nombres_categorias:
+        if nombres_categorias and not palabras_clave:
             condiciones.append("""
                 EXISTS (
                     SELECT 1
@@ -379,7 +400,28 @@ class ConexionBDIA(RepositorioBase):
             )
             params.append(precio_max)
 
-        if palabras_clave:
+        if palabras_clave and nombres_categorias:
+            partes = []
+            for kw in palabras_clave:
+                partes.append(
+                    "(s.nombre ILIKE %s OR s.descripcion ILIKE %s)"
+                )
+                params.extend([f"%{kw}%", f"%{kw}%"])
+            condiciones.append(f"""
+                (
+                    ({' OR '.join(partes)})
+                    OR EXISTS (
+                        SELECT 1
+                        FROM   servicio_categoria  sc2
+                        JOIN   categorias          c2
+                               ON c2.id = sc2.id_categoria
+                        WHERE  sc2.id_servicio       = s.id
+                          AND  c2.nombre_categoria   = ANY(%s)
+                    )
+                )
+            """)
+            params.append(nombres_categorias)
+        elif palabras_clave:
             partes = []
             for kw in palabras_clave:
                 partes.append(
@@ -388,7 +430,7 @@ class ConexionBDIA(RepositorioBase):
                 params.extend([f"%{kw}%", f"%{kw}%"])
             condiciones.append(f"({' OR '.join(partes)})")
 
-        if nombres_categorias:
+        if nombres_categorias and not palabras_clave:
             condiciones.append("""
                 EXISTS (
                     SELECT 1
