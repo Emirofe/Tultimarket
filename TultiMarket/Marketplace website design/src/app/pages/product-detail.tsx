@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, Link, useSearchParams } from "react-router";
 import {
   Heart,
@@ -8,6 +8,7 @@ import {
   Star,
   Store,
   ChevronRight,
+  ChevronLeft,
   Clock,
   Calendar,
   MapPin,
@@ -20,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { type Product, type ServiceAgendaSlot } from "../data/mock-data";
-import { getProductoDetalleApi, getServicioDetalleApi, createReviewApi, createReporteCompradorApi } from "../api/api-client";
+import { getProductoDetalleApi, getServicioDetalleApi, createReviewApi, createReporteCompradorApi, getCategoriasApi } from "../api/api-client";
 import { StarRating } from "../components/star-rating";
 import { useStore } from "../context/store-context";
 import { Navbar } from "../components/layout/navbar";
@@ -41,6 +42,7 @@ export function ProductDetailPage() {
   } = useStore();
 
   const [product, setProduct] = useState<Product | null>(null);
+  const [allCategories, setAllCategories] = useState<{ id: string; name: string; tipo: string; id_padre: string | null }[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedImage, setSelectedImage] = useState(0);
   const [quantity, setQuantity] = useState(1);
@@ -113,6 +115,36 @@ export function ProductDetailPage() {
         .finally(() => setIsLoading(false));
     }
   }, [id, typeParam]);
+
+  // ─── Cargar categorías para el breadcrumb jerárquico ─────────────────────
+  useEffect(() => {
+    getCategoriasApi()
+      .then((cats) => setAllCategories(cats))
+      .catch(() => setAllCategories([]));
+  }, []);
+
+  // ─── Construir la ruta jerárquica de categorías ──────────────────────────
+  const breadcrumbTrail = useMemo(() => {
+    if (!product || allCategories.length === 0) return [];
+    // Buscar la categoría hoja por nombre
+    const leafCat = allCategories.find(
+      (c) => c.name.toLowerCase() === product.category.toLowerCase()
+    );
+    if (!leafCat) return [{ id: "", name: product.category }];
+
+    // Trazar de hoja a raíz
+    const trail: { id: string; name: string }[] = [];
+    const visited = new Set<string>();
+    let current: typeof leafCat | undefined = leafCat;
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      trail.unshift({ id: current.id, name: current.name });
+      current = current.id_padre
+        ? allCategories.find((c) => c.id === current!.id_padre)
+        : undefined;
+    }
+    return trail;
+  }, [product, allCategories]);
 
   useEffect(() => {
     if (product?.type === "servicio") {
@@ -279,16 +311,65 @@ export function ProductDetailPage() {
     <div className="min-h-screen flex flex-col bg-gray-50">
       <Navbar />
 
-      {/* Breadcrumb */}
-      <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-2 text-muted-foreground" style={{ fontSize: 13 }}>
-        <Link to="/" className="hover:text-primary">Inicio</Link>
-        <ChevronRight size={14} />
-        <Link to={`/?categoria=${product.category}`} className="hover:text-primary capitalize">
-          {product.category.replace("-", " ")}
-        </Link>
-        <ChevronRight size={14} />
-        <span className="text-foreground truncate">{product.name}</span>
-      </div>
+      {/* Breadcrumb jerárquico profesional */}
+      <nav className="max-w-7xl mx-auto px-4 py-3 w-full" aria-label="Breadcrumb">
+        {/* Desktop: ruta completa */}
+        <ol className="hidden sm:flex items-center justify-center gap-1 text-muted-foreground flex-wrap" style={{ fontSize: 13 }}>
+          <li>
+            <Link to="/" className="hover:text-primary transition-colors">Inicio</Link>
+          </li>
+          {product.categoryPath && product.categoryPath.length > 0 ? (
+            product.categoryPath.map((cat) => (
+              <li key={cat.id} className="flex items-center gap-1">
+                <ChevronRight size={13} className="text-muted-foreground/50 shrink-0" />
+                <Link
+                  to={`/?cat=${cat.id}`}
+                  className="hover:text-primary transition-colors truncate"
+                  style={{ maxWidth: 200 }}
+                  title={cat.name}
+                >
+                  {cat.name}
+                </Link>
+              </li>
+            ))
+          ) : (
+            <li className="flex items-center gap-1">
+              <ChevronRight size={13} className="text-muted-foreground/50 shrink-0" />
+              <span className="truncate capitalize" style={{ maxWidth: 200 }} title={product.category}>
+                {product.category.replace("-", " ")}
+              </span>
+            </li>
+          )}
+          <li className="flex items-center gap-1">
+            <ChevronRight size={13} className="text-muted-foreground/50 shrink-0" />
+            <span
+              className="text-foreground truncate"
+              style={{ maxWidth: 280, fontWeight: 500 }}
+              title={product.name}
+            >
+              {product.name}
+            </span>
+          </li>
+        </ol>
+
+        {/* Mobile: link de regreso simplificado */}
+        <div className="flex sm:hidden items-center gap-2">
+          <Link
+            to={product.categoryPath && product.categoryPath.length > 0
+              ? `/?cat=${product.categoryPath[product.categoryPath.length - 1].id}`
+              : "/"}
+            className="flex items-center gap-1.5 text-primary hover:text-primary/80 transition-colors"
+            style={{ fontSize: 13, fontWeight: 500 }}
+          >
+            <ChevronLeft size={16} />
+            <span className="truncate" style={{ maxWidth: 250 }}>
+              {product.categoryPath && product.categoryPath.length > 0
+                ? product.categoryPath[product.categoryPath.length - 1].name
+                : "Inicio"}
+            </span>
+          </Link>
+        </div>
+      </nav>
 
       <main className="max-w-7xl mx-auto px-4 pb-12">
         <div className="bg-white rounded-2xl border border-border overflow-hidden">

@@ -1586,7 +1586,7 @@ export async function getCategoriasAdminApi() {
   return api<{
     status: string;
     total: number;
-    categorias: Array<{ id: number; nombre_categoria: string; tipo: string }>;
+    categorias: Array<{ id: number; nombre_categoria: string; tipo: string; id_padre: number | null }>;
   }>("/admin/categorias");
 }
 
@@ -1597,11 +1597,25 @@ export async function getCategoriasAdminApi() {
 export async function createCategoriaAdminApi(datos: {
   nombre_categoria: string;
   tipo: string;
+  id_padre?: number | null;
 }) {
   return api<{ status: string; mensaje: string; data: any }>("/admin/categorias", {
     method: "POST",
     body: JSON.stringify(datos),
   });
+}
+
+/**
+ * GET /admin/categorias/:id/impacto
+ * Consulta el impacto de eliminar una categoría (subcategorías, productos, servicios afectados).
+ */
+export async function getImpactoCategoriaAdminApi(id: number) {
+  return api<{
+    status: string;
+    subcategorias: number;
+    productos_afectados: number;
+    servicios_afectados: number;
+  }>(`/admin/categorias/${id}/impacto`);
 }
 
 /**

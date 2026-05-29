@@ -29,6 +29,9 @@ export interface Product {
   originalPrice?: number;
   discountPercent?: number;
   agendaSlots?: ServiceAgendaSlot[];
+  // Campos para breadcrumb jerárquico de categorías
+  categoryId?: string;
+  categoryPath?: Array<{ id: string; name: string }>;
 }
 
 export interface ServiceAgendaSlot {

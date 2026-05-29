@@ -74,7 +74,7 @@ export interface RawProductoDetalle {
   };
   stock_total: number;
   numero_resenas: number;
-  categorias: string[];
+  categorias: Array<{id: number; nombre: string; id_padre: number | null}> | string[];
   resenas: RawResena[];
 }
 
@@ -111,7 +111,7 @@ export interface RawServicioDetalle {
   empresa: string;
   id_negocio: number | null;
   numero_resenas: number;
-  categorias: string[];
+  categorias: Array<{id: number; nombre: string; id_padre: number | null}> | string[];
   resenas: RawResena[];
   agenda_disponible: RawAgendaSlot[];
 }
@@ -240,9 +240,67 @@ function formatAgendaAddress(slot: RawAgendaSlot): string | undefined {
   return parts.length > 0 ? parts.join(", ") : undefined;
 }
 
+/** Tipo interno para categoría con jerarquía */
+interface RawCatObj { id: number; nombre: string; id_padre: number | null }
+
+/**
+ * Construye la ruta completa de categorías desde la hoja hasta la raíz.
+ * Recibe el array de categorías asociadas al producto (puede ser 1 o más)
+ * y devuelve { categoryId, categoryPath } con el camino jerárquico.
+ */
+function buildCategoryHierarchy(categorias: RawCatObj[]): { categoryId: string; categoryPath: Array<{ id: string; name: string }> } {
+  if (!categorias || categorias.length === 0) {
+    return { categoryId: "", categoryPath: [] };
+  }
+
+  const byId = new Map(categorias.map((c) => [c.id, c]));
+
+  // Buscar la categoría hoja (la que no es padre de ninguna otra en el array)
+  const parentIds = new Set(categorias.map((c) => c.id_padre).filter((id): id is number => id !== null));
+  // Una hoja es aquella cuyo ID no aparece como id_padre de otra
+  let leaf = categorias.find((c) => !categorias.some((other) => other.id_padre === c.id));
+  if (!leaf) leaf = categorias[0];
+
+  // Construir el camino de hoja a raíz
+  const path: Array<{ id: string; name: string }> = [];
+  const visited = new Set<number>();
+  let current: RawCatObj | undefined = leaf;
+
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    path.unshift({ id: String(current.id), name: current.nombre });
+    current = current.id_padre != null ? byId.get(current.id_padre) : undefined;
+  }
+
+  return {
+    categoryId: String(leaf.id),
+    categoryPath: path,
+  };
+}
+
+/**
+ * Normaliza el array de categorías del backend.
+ * El backend nuevo devuelve objetos {id, nombre, id_padre}.
+ * El backend viejo devolvía strings. Esta función maneja ambos.
+ */
+function normalizeCategorias(raw: Array<{id: number; nombre: string; id_padre: number | null}> | string[]): { objs: RawCatObj[]; firstName: string } {
+  if (!raw || raw.length === 0) {
+    return { objs: [], firstName: "general" };
+  }
+  // Si el primer elemento es string, es el formato viejo
+  if (typeof raw[0] === "string") {
+    return { objs: [], firstName: (raw as string[])[0] || "general" };
+  }
+  const objs = raw as RawCatObj[];
+  return { objs, firstName: objs[0]?.nombre || "general" };
+}
+
 /** Convierte el detalle completo de un PRODUCTO del back al tipo Product del front */
 export function mapProductoDetalle(raw: RawProductoDetalle): Product {
   const images = mapImageGallery(raw.imagen_principal, raw.galeria_imagenes ?? null);
+  const { objs, firstName } = normalizeCategorias(raw.categorias);
+  const hierarchy = objs.length > 0 ? buildCategoryHierarchy(objs) : { categoryId: "", categoryPath: [] };
+
   return {
     id: String(raw.id),
     name: raw.nombre,
@@ -258,7 +316,9 @@ export function mapProductoDetalle(raw: RawProductoDetalle): Product {
         : undefined,
     image: images[0],
     images,
-    category: raw.categorias[0] ?? "general",
+    category: firstName,
+    categoryId: hierarchy.categoryId,
+    categoryPath: hierarchy.categoryPath,
     rating: raw.calificacion ?? 0,
     reviewCount: raw.numero_resenas,
     stock: raw.stock_total,
@@ -322,6 +382,9 @@ export function mapProductoLista(raw: RawProductoLista): Product {
 /** Convierte el detalle completo de un SERVICIO del back al tipo Product del front */
 export function mapServicioDetalle(raw: RawServicioDetalle): Product {
   const images = mapImageGallery(raw.imagen_principal, raw.galeria_imagenes ?? null);
+  const { objs, firstName } = normalizeCategorias(raw.categorias);
+  const hierarchy = objs.length > 0 ? buildCategoryHierarchy(objs) : { categoryId: "", categoryPath: [] };
+
   return {
     id: String(raw.id),
     name: raw.nombre,
@@ -337,10 +400,12 @@ export function mapServicioDetalle(raw: RawServicioDetalle): Product {
         : undefined,
     image: images[0],
     images,
-    category: raw.categorias[0] ?? "general",
+    category: firstName,
+    categoryId: hierarchy.categoryId,
+    categoryPath: hierarchy.categoryPath,
     rating: raw.calificacion ?? 0,
     reviewCount: raw.numero_resenas,
-    stock: 99,                 // los servicios no tienen stock tradicional
+    stock: 99,
     sellerId: raw.id_negocio ? String(raw.id_negocio) : "0",
     sellerName: raw.empresa,
     reviews: raw.resenas.map(mapResena),

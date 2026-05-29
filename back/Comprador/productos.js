@@ -962,15 +962,18 @@ function createCompradorRouter({ pool }) {
              ),
              0
            ) AS numero_resenas,
-           COALESCE(
-             (
-               SELECT array_agg(c.nombre_categoria ORDER BY c.nombre_categoria ASC)
-               FROM producto_categoria pc
-               INNER JOIN categorias c ON c.id = pc.id_categoria
-               WHERE pc.id_producto = p.id
-             ),
-             ARRAY[]::varchar[]
-           ) AS categorias
+            COALESCE(
+              (
+                SELECT json_agg(
+                  json_build_object('id', c.id, 'nombre', c.nombre_categoria, 'id_padre', c.id_padre)
+                  ORDER BY c.nombre_categoria ASC
+                )
+                FROM producto_categoria pc
+                INNER JOIN categorias c ON c.id = pc.id_categoria
+                WHERE pc.id_producto = p.id
+              ),
+              '[]'::json
+            ) AS categorias
          FROM productos p
          LEFT JOIN negocios n ON n.id = p.id_negocio
          LEFT JOIN descuentos d ON d.id = p.id_descuento
@@ -1165,7 +1168,7 @@ function createCompradorRouter({ pool }) {
       );
 
       const categoriasResult = await pool.query(
-        `SELECT c.nombre_categoria
+        `SELECT c.id, c.nombre_categoria, c.id_padre
          FROM servicio_categoria sc
          INNER JOIN categorias c ON c.id = sc.id_categoria
          WHERE sc.id_servicio = $1
@@ -1191,7 +1194,7 @@ function createCompradorRouter({ pool }) {
           empresa: servicio.empresa,
           id_negocio: servicio.id_negocio,
           numero_resenas: Number(servicio.numero_resenas),
-          categorias: categoriasResult.rows.map((categoria) => categoria.nombre_categoria),
+          categorias: categoriasResult.rows.map((categoria) => ({ id: categoria.id, nombre: categoria.nombre_categoria, id_padre: categoria.id_padre })),
           agenda_disponible: agendaResult.rows.map((slot) => ({
             id: slot.id,
             id_sucursal: null,

@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useSearchParams, Link } from "react-router";
-import { ChevronLeft, ChevronRight, SlidersHorizontal, X, Loader2, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, SlidersHorizontal, X, Loader2, Sparkles, Search, Grid3X3, ArrowLeft } from "lucide-react";
 import { type Product } from "../data/mock-data";
 import {
   getCategoriasApi,
@@ -99,19 +99,65 @@ export function HomePage() {
   const searchFilter = searchParams.get("buscar");
   const catFromUrl = searchParams.get("cat");
 
-  // ─── Sincronizar ?cat de la URL con la selección de nivel 1 ────────────────
+  // ─── Sincronizar ?cat de la URL con la selección jerárquica ─────────────────
+  // Detecta automáticamente en qué nivel está la categoría y pre-selecciona
+  // todos los niveles padres para que las barras se desplieguen correctamente.
   useEffect(() => {
-    if (catFromUrl && catFromUrl !== selectedLevel1) {
-      setSelectedLevel1(catFromUrl);
-      setSelectedLevel2(null);
-      setSelectedLevel3(null);
-    } else if (!catFromUrl && selectedLevel1) {
-      // URL limpia → limpiar selección
-      setSelectedLevel1(null);
-      setSelectedLevel2(null);
-      setSelectedLevel3(null);
+    if (!catFromUrl) {
+      if (selectedLevel1) {
+        setSelectedLevel1(null);
+        setSelectedLevel2(null);
+        setSelectedLevel3(null);
+      }
+      return;
     }
-  }, [catFromUrl]);
+
+    // Esperar a que las categorías estén cargadas
+    if (isLoadingCategories || allCategories.length === 0) return;
+
+    const cat = allCategories.find((c) => c.id === catFromUrl);
+    if (!cat) {
+      // Categoría no encontrada, tratar como nivel 1
+      if (catFromUrl !== selectedLevel1) {
+        setSelectedLevel1(catFromUrl);
+        setSelectedLevel2(null);
+        setSelectedLevel3(null);
+      }
+      return;
+    }
+
+    // Construir el camino de la categoría hacia la raíz
+    const findParent = (id: string | null) => (id ? allCategories.find((c) => c.id === id) : undefined);
+
+    if (cat.id_padre === null) {
+      // Es nivel 1 (raíz)
+      if (selectedLevel1 !== cat.id) {
+        setSelectedLevel1(cat.id);
+        setSelectedLevel2(null);
+        setSelectedLevel3(null);
+      }
+    } else {
+      const parent = findParent(cat.id_padre);
+      if (parent && parent.id_padre === null) {
+        // Es nivel 2 (padre es raíz)
+        if (selectedLevel1 !== parent.id || selectedLevel2 !== cat.id) {
+          setSelectedLevel1(parent.id);
+          setSelectedLevel2(cat.id);
+          setSelectedLevel3(null);
+        }
+      } else if (parent) {
+        // Es nivel 3 (padre tiene abuelo)
+        const grandparent = findParent(parent.id_padre);
+        if (grandparent) {
+          if (selectedLevel1 !== grandparent.id || selectedLevel2 !== parent.id || selectedLevel3 !== cat.id) {
+            setSelectedLevel1(grandparent.id);
+            setSelectedLevel2(parent.id);
+            setSelectedLevel3(cat.id);
+          }
+        }
+      }
+    }
+  }, [catFromUrl, isLoadingCategories, allCategories]);
 
   // ─── Cargar TODAS las categorías del backend ──────────────────────────────
   useEffect(() => {
@@ -572,7 +618,7 @@ export function HomePage() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Componente auxiliar: Barra deslizante de categorías
+// Componente auxiliar: Barra de categorías con búsqueda rápida y vista expandida
 // ═══════════════════════════════════════════════════════════════════════════════
 function CategoryBar({
   items,
@@ -588,6 +634,18 @@ function CategoryBar({
   onClear?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [catSearch, setCatSearch] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-scroll hasta la categoría seleccionada cuando se carga desde URL
+  useEffect(() => {
+    if (!selectedId || !scrollRef.current) return;
+    const selectedBtn = scrollRef.current.querySelector(`[data-cat-id="${selectedId}"]`) as HTMLElement | null;
+    if (selectedBtn) {
+      selectedBtn.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+    }
+  }, [selectedId, items]);
 
   const scroll = (direction: "left" | "right") => {
     if (!scrollRef.current) return;
@@ -598,63 +656,127 @@ function CategoryBar({
     });
   };
 
+  // Filtrar categorías por texto de búsqueda
+  const normalizedSearch = catSearch.trim().toLowerCase();
+  const filteredItems = normalizedSearch
+    ? items.filter((cat) => cat.name.toLowerCase().includes(normalizedSearch))
+    : items;
+
+  const showSearchBar = items.length > 6;
+
   return (
     <div className="relative">
-      {/* Label + clear button */}
-      {label && (
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-muted-foreground" style={{ fontSize: 13 }}>▸ {label}</span>
-          {onClear && (
-            <button
-              onClick={onClear}
-              className="text-red-500 hover:text-red-600 transition-colors"
-              style={{ fontSize: 12 }}
-              title="Limpiar selección"
-            >
-              <X size={14} />
-            </button>
-          )}
+
+      {/* Barra de búsqueda rápida + botón expandir */}
+      {showSearchBar && (
+        <div className="flex items-center gap-2 mb-3">
+          <div className="relative flex-1 max-w-xs">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={catSearch}
+              onChange={(e) => setCatSearch(e.target.value)}
+              placeholder="Buscar categoría..."
+              className="w-full pl-9 pr-8 py-2 rounded-lg border border-border bg-white outline-none focus:border-primary transition-colors"
+              style={{ fontSize: 13 }}
+            />
+            {catSearch && (
+              <button
+                onClick={() => setCatSearch("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-muted-foreground hover:text-foreground"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border transition-all ${
+              expanded
+                ? "bg-primary text-white border-primary"
+                : "bg-white border-border text-gray-600 hover:border-primary/40"
+            }`}
+            style={{ fontSize: 12, fontWeight: 500 }}
+            title={expanded ? "Vista compacta" : "Ver todas las categorías"}
+          >
+            <Grid3X3 size={14} />
+            {expanded ? "Compactar" : "Ver todas"}
+          </button>
         </div>
       )}
 
-      <div className="flex items-center gap-2">
-        {/* Scroll left */}
-        <button
-          onClick={() => scroll("left")}
-          className="flex-shrink-0 p-1.5 rounded-full bg-white border border-border hover:bg-gray-100 transition-colors shadow-sm"
-        >
-          <ChevronLeft size={16} className="text-gray-600" />
-        </button>
-
-        {/* Scrollable container */}
-        <div
-          ref={scrollRef}
-          className="flex gap-2 overflow-x-auto scrollbar-hide"
-          style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
-        >
-          {items.map((cat) => (
-            <button
-              key={cat.id}
-              onClick={() => onSelect(cat.id)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border whitespace-nowrap transition-all flex-shrink-0 ${selectedId === cat.id
-                ? "bg-primary text-white border-primary shadow-md scale-[1.02]"
-                : "bg-white border-border text-gray-700 hover:border-primary/40 hover:shadow-sm"
-                }`}
-              style={{ fontSize: 13, fontWeight: 500 }}
-            >
-              {cat.name}
-            </button>
-          ))}
+      {/* Vista expandida: grid de múltiples filas */}
+      {(expanded || normalizedSearch) ? (
+        <div>
+          {filteredItems.length === 0 ? (
+            <p className="text-muted-foreground py-3 text-center" style={{ fontSize: 13 }}>
+              No se encontraron categorías para "{catSearch}"
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {filteredItems.map((cat) => (
+                <button
+                  key={cat.id}
+                  onClick={() => {
+                    onSelect(cat.id);
+                    setCatSearch("");
+                    setExpanded(false);
+                  }}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border whitespace-nowrap transition-all ${selectedId === cat.id
+                    ? "bg-primary text-white border-primary shadow-md scale-[1.02]"
+                    : "bg-white border-border text-gray-700 hover:border-primary/40 hover:shadow-sm"
+                    }`}
+                  style={{ fontSize: 13, fontWeight: 500 }}
+                >
+                  {cat.name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+      ) : (
+        /* Vista compacta: barra deslizable original */
+        <div className="flex items-center gap-2">
+          {/* Scroll left */}
+          <button
+            onClick={() => scroll("left")}
+            className="flex-shrink-0 p-1.5 rounded-full bg-white border border-border hover:bg-gray-100 transition-colors shadow-sm"
+          >
+            <ChevronLeft size={16} className="text-gray-600" />
+          </button>
 
-        {/* Scroll right */}
-        <button
-          onClick={() => scroll("right")}
-          className="flex-shrink-0 p-1.5 rounded-full bg-white border border-border hover:bg-gray-100 transition-colors shadow-sm"
-        >
-          <ChevronRight size={16} className="text-gray-600" />
-        </button>
-      </div>
+          {/* Scrollable container */}
+          <div
+            ref={scrollRef}
+            className="flex gap-2 overflow-x-auto scrollbar-hide"
+            style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+          >
+            {items.map((cat) => (
+              <button
+                key={cat.id}
+                data-cat-id={cat.id}
+                onClick={() => onSelect(cat.id)}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border whitespace-nowrap transition-all flex-shrink-0 ${selectedId === cat.id
+                  ? "bg-primary text-white border-primary shadow-md scale-[1.02]"
+                  : "bg-white border-border text-gray-700 hover:border-primary/40 hover:shadow-sm"
+                  }`}
+                style={{ fontSize: 13, fontWeight: 500 }}
+              >
+                {cat.name}
+              </button>
+            ))}
+          </div>
+
+          {/* Scroll right */}
+          <button
+            onClick={() => scroll("right")}
+            className="flex-shrink-0 p-1.5 rounded-full bg-white border border-border hover:bg-gray-100 transition-colors shadow-sm"
+          >
+            <ChevronRight size={16} className="text-gray-600" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -440,7 +440,7 @@ function createAdminRouter({ pool }) {
 
     try {
       const result = await pool.query(
-        `SELECT id, nombre_categoria, tipo FROM categorias ORDER BY nombre_categoria ASC`
+        `SELECT id, nombre_categoria, tipo, id_padre FROM categorias ORDER BY nombre_categoria ASC`
       );
       return res.status(200).json({
         status: "ok",
@@ -458,15 +458,24 @@ function createAdminRouter({ pool }) {
     const adminId = requireAdminSession(req, res);
     if (!adminId) return;
 
-    const { nombre_categoria, tipo } = req.body;
+    const { nombre_categoria, tipo, id_padre } = req.body;
     if (!nombre_categoria || !tipo) {
       return res.status(400).json({ status: "error", mensaje: "nombre_categoria y tipo son obligatorios" });
     }
 
     try {
+      // Validar que el padre exista si se proporcionó
+      const parentId = id_padre != null && Number(id_padre) > 0 ? Number(id_padre) : null;
+      if (parentId) {
+        const parentExists = await pool.query("SELECT id FROM categorias WHERE id = $1 LIMIT 1", [parentId]);
+        if (parentExists.rows.length === 0) {
+          return res.status(400).json({ status: "error", mensaje: "La categoría padre no existe" });
+        }
+      }
+
       const result = await pool.query(
-        `INSERT INTO categorias (nombre_categoria, tipo) VALUES ($1, $2) RETURNING *`,
-        [nombre_categoria.trim(), tipo]
+        `INSERT INTO categorias (nombre_categoria, tipo, id_padre) VALUES ($1, $2, $3) RETURNING *`,
+        [nombre_categoria.trim(), tipo, parentId]
       );
       return res.status(201).json({ status: "ok", mensaje: "Categoría creada", data: result.rows[0] });
     } catch (error) {
@@ -502,23 +511,93 @@ function createAdminRouter({ pool }) {
     }
   });
 
-  // Eliminar categoría
+  // Consultar impacto de eliminación de categoría (para diálogo de confirmación)
+  router.get("/admin/categorias/:id/impacto", async (req, res) => {
+    const adminId = requireAdminSession(req, res);
+    if (!adminId) return;
+
+    const catId = Number(req.params.id);
+    if (!Number.isInteger(catId) || catId <= 0) {
+      return res.status(400).json({ status: "error", mensaje: "id inválido" });
+    }
+
+    try {
+      // Buscar recursivamente todos los IDs de categorías hijas
+      const descendantsResult = await pool.query(
+        `WITH RECURSIVE hijos AS (
+           SELECT id FROM categorias WHERE id_padre = $1
+           UNION ALL
+           SELECT c.id FROM categorias c INNER JOIN hijos h ON c.id_padre = h.id
+         )
+         SELECT id FROM hijos`,
+        [catId]
+      );
+      const allIds = [catId, ...descendantsResult.rows.map((r) => r.id)];
+
+      // Contar productos y servicios afectados
+      const productosResult = await pool.query(
+        `SELECT COUNT(DISTINCT id_producto) AS total FROM producto_categoria WHERE id_categoria = ANY($1::int[])`,
+        [allIds]
+      );
+      const serviciosResult = await pool.query(
+        `SELECT COUNT(DISTINCT id_servicio) AS total FROM servicio_categoria WHERE id_categoria = ANY($1::int[])`,
+        [allIds]
+      );
+
+      return res.status(200).json({
+        status: "ok",
+        subcategorias: descendantsResult.rows.length,
+        productos_afectados: Number(productosResult.rows[0].total),
+        servicios_afectados: Number(serviciosResult.rows[0].total),
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ status: "error", mensaje: "Error al consultar impacto" });
+    }
+  });
+
+  // Eliminar categoría con cascada (elimina hijas recursivamente)
   router.delete("/admin/categorias/:id", async (req, res) => {
     const adminId = requireAdminSession(req, res);
     if (!adminId) return;
 
     const catId = Number(req.params.id);
+    if (!Number.isInteger(catId) || catId <= 0) {
+      return res.status(400).json({ status: "error", mensaje: "id inválido" });
+    }
 
     try {
-      // Primero eliminar relaciones en producto_categoria y servicio_categoria
-      await pool.query(`DELETE FROM producto_categoria WHERE id_categoria = $1`, [catId]);
-      await pool.query(`DELETE FROM servicio_categoria WHERE id_categoria = $1`, [catId]);
-      const result = await pool.query(`DELETE FROM categorias WHERE id = $1 RETURNING id`, [catId]);
+      // Buscar recursivamente todos los IDs de categorías hijas
+      const descendantsResult = await pool.query(
+        `WITH RECURSIVE hijos AS (
+           SELECT id FROM categorias WHERE id_padre = $1
+           UNION ALL
+           SELECT c.id FROM categorias c INNER JOIN hijos h ON c.id_padre = h.id
+         )
+         SELECT id FROM hijos`,
+        [catId]
+      );
+      const allIds = [catId, ...descendantsResult.rows.map((r) => r.id)];
+
+      // Eliminar relaciones de producto y servicio para todas las categorías
+      await pool.query(`DELETE FROM producto_categoria WHERE id_categoria = ANY($1::int[])`, [allIds]);
+      await pool.query(`DELETE FROM servicio_categoria WHERE id_categoria = ANY($1::int[])`, [allIds]);
+
+      // Eliminar todas las categorías (hijas primero, luego padre)
+      const result = await pool.query(
+        `DELETE FROM categorias WHERE id = ANY($1::int[]) RETURNING id`,
+        [allIds]
+      );
 
       if (result.rows.length === 0) {
         return res.status(404).json({ status: "error", mensaje: "Categoría no encontrada" });
       }
-      return res.status(200).json({ status: "ok", mensaje: "Categoría eliminada" });
+
+      return res.status(200).json({
+        status: "ok",
+        mensaje: "Categoría eliminada",
+        eliminadas: result.rows.length,
+      });
     } catch (error) {
       console.error(error);
       return res.status(500).json({ status: "error", mensaje: "Error al eliminar categoría" });
